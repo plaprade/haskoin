@@ -23,6 +23,8 @@ module Network.Haskoin.Test.Crypto
 , ArbitraryHardPath(..)
 , ArbitrarySoftPath(..)
 , ArbitraryDerivPath(..)
+, ArbitraryParsedPath(..)
+
 ) where
 
 import Test.QuickCheck
@@ -47,6 +49,7 @@ import Network.Haskoin.Crypto.Hash
 import Network.Haskoin.Crypto.Keys
 import Network.Haskoin.Crypto.Base58
 import Network.Haskoin.Crypto.ExtendedKeys
+import Data.List (foldl')
 
 newtype ArbitraryHash160 = ArbitraryHash160 Hash160
     deriving (Eq, Show, Read)
@@ -211,38 +214,45 @@ instance Arbitrary ArbitraryXPubKey where
 genIndex :: Gen Word32
 genIndex = (`clearBit` 31) <$> arbitrary
 
+data ArbitraryBip32PathIndex = ArbitraryBip32PathIndex Bip32PathIndex
+    deriving (Show,Eq)
+
+instance Arbitrary ArbitraryBip32PathIndex where
+    arbitrary = 
+        ArbitraryBip32PathIndex <$> oneof [soft, hard]
+        where soft = Bip32SoftIndex <$> genIndex
+              hard = Bip32HardIndex <$> genIndex
+
 data ArbitraryHardPath = ArbitraryHardPath HardPath
     deriving (Show, Eq)
 
 instance Arbitrary ArbitraryHardPath where
     arbitrary =
-        ArbitraryHardPath <$> (go =<< listOf genIndex)
-      where
-        go []     = return Deriv
-        go (i:is) = (:| i) <$> go is
+        ArbitraryHardPath . foldl' (:|) Deriv <$> listOf genIndex
+
 
 data ArbitrarySoftPath = ArbitrarySoftPath SoftPath
     deriving (Show, Eq)
 
 instance Arbitrary ArbitrarySoftPath where
     arbitrary =
-        ArbitrarySoftPath <$> (go =<< listOf genIndex)
-      where
-        go []     = return Deriv
-        go (i:is) = (:/ i) <$> go is
+        ArbitrarySoftPath . foldl' (:/) Deriv <$> listOf genIndex
 
 data ArbitraryDerivPath = ArbitraryDerivPath DerivPath
     deriving (Show, Eq)
 
-instance Arbitrary ArbitraryDerivPath where
+instance Arbitrary ArbitraryDerivPath where    
+    arbitrary = ArbitraryDerivPath . concatBip32Segments . map (\(ArbitraryBip32PathIndex i) -> i ) <$> arbitrary  
+        
+
+data ArbitraryParsedPath = ArbitraryParsedPath ParsedPath 
+  deriving (Show, Eq)
+
+instance Arbitrary ArbitraryParsedPath where
     arbitrary = do
-        xs  <- listOf genIndex
-        ys  <- listOf genIndex
-        return . ArbitraryDerivPath . goSoft ys =<< goHard xs
-      where
-        goSoft [] h     = h
-        goSoft (i:is) h = (goSoft is h) :/ i
-        goHard :: HardOrGeneric t => [Word32] -> Gen (DerivPathI t)
-        goHard (i:is) = (:| i) <$> goHard is
-        goHard []     = return Deriv
+        ArbitraryDerivPath d <- arbitrary 
+        ArbitraryParsedPath <$> oneof [ pure $ ParsedPrv d
+                                      , pure $ ParsedPub d
+                                      , pure $ ParsedEmpty d ]
+
 

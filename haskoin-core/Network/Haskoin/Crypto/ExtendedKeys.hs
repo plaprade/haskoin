@@ -40,6 +40,7 @@ module Network.Haskoin.Crypto.ExtendedKeys
 , DerivPath
 , HardPath
 , SoftPath
+, Bip32PathIndex (..)
 , derivePath
 , derivePubPath
 , toHard
@@ -60,6 +61,7 @@ module Network.Haskoin.Crypto.ExtendedKeys
 , derivePathAddrs
 , derivePathMSAddr
 , derivePathMSAddrs
+, concatBip32Segments
 ) where
 
 import Control.DeepSeq (NFData, rnf)
@@ -91,6 +93,7 @@ import Network.Haskoin.Script.Parser
 import Network.Haskoin.Crypto.Keys
 import Network.Haskoin.Crypto.Hash
 import Network.Haskoin.Crypto.Base58
+import Data.List (foldl')
 
 {- See BIP32 for details: https://en.bitcoin.it/wiki/BIP_0032 -}
 
@@ -562,6 +565,13 @@ instance Read SoftPath where
         maybe pfail return $ parseSoft str
 
 -- TODO: Test
+instance IsString ParsedPath where
+    fromString =
+        fromMaybe e . parsePath
+      where
+        e = error "Could not parse derivation path"
+
+-- TODO: Test
 instance IsString DerivPath where
     fromString =
         getParsedPath . fromMaybe e . parsePath
@@ -582,6 +592,11 @@ instance IsString SoftPath where
       where
         e = error "Could not parse soft derivation path"
 
+instance FromJSON ParsedPath where
+    parseJSON = withText "ParsedPathPath" $ \str -> case parsePath $ cs str of
+        Just p -> return p
+        _      -> mzero
+
 instance FromJSON DerivPath where
     parseJSON = withText "DerivPath" $ \str -> case parsePath $ cs str of
         Just p -> return $ getParsedPath p
@@ -600,33 +615,53 @@ instance FromJSON SoftPath where
 instance ToJSON (DerivPathI t) where
     toJSON = String . cs . pathToStr
 
+instance ToJSON ParsedPath where
+    toJSON (ParsedPrv p)   = String . cs . ("m" ++) . pathToStr $ p
+    toJSON (ParsedPub p)   = String . cs . ("M" ++) . pathToStr $ p
+    toJSON (ParsedEmpty p) = String . cs . ("" ++) . pathToStr $ p
+
 {- Parsing derivation paths of the form m/1/2'/3 or M/1/2'/3 -}
 
 data ParsedPath = ParsedPrv   { getParsedPath :: !DerivPath }
                 | ParsedPub   { getParsedPath :: !DerivPath }
                 | ParsedEmpty { getParsedPath :: !DerivPath }
-
+  deriving (Read, Show, Eq)
 -- | Parse derivation path string for extended key.
 -- Forms: “m/0'/2”, “M/2/3/4”.
 parsePath :: String -> Maybe ParsedPath
 parsePath str = do
-    res <- go =<< reverse <$> mapM f xs
+    res <- concatBip32Segments <$> mapM parseBip32PathIndex xs
     case x of
         "m" -> Just $ ParsedPrv res
         "M" -> Just $ ParsedPub res
         ""  -> Just $ ParsedEmpty res
         _   -> Nothing
   where
-    (x:xs) = splitOn "/" str
-    f deriv = case reads deriv of
-        [(i, "" )] -> (,) False <$> g i
-        [(i, "'")] -> (,) True <$> g i
-        _ -> Nothing
-    g i = guard (i >=0 && i < 0x80000000) >> return i
-    go [] = Just Deriv
-    go ((hard, i):ds)
-        | hard      = (:| i) <$> go ds
-        | otherwise = (:/ i) <$> go ds
+    (x : xs) = splitOn "/" str
+                
+
+concatBip32Segments :: [Bip32PathIndex] -> DerivPath
+concatBip32Segments xs = foldl' appendBip32Segment Deriv xs
+
+
+appendBip32Segment :: DerivPath -> Bip32PathIndex  -> DerivPath
+appendBip32Segment d (Bip32SoftIndex i) = d :/ i 
+appendBip32Segment d (Bip32HardIndex i) = d :| i 
+
+
+parseBip32PathIndex :: String -> Maybe Bip32PathIndex
+parseBip32PathIndex segment = case reads segment of
+    [(i, "" )] -> guard (is31Bit i) >> ( return $ Bip32SoftIndex i )
+    [(i, "'")] -> guard (is31Bit i) >> ( return $ Bip32HardIndex i )
+    _ -> Nothing
+
+
+data Bip32PathIndex = Bip32HardIndex KeyIndex | Bip32SoftIndex KeyIndex
+  deriving (Read,Show,Eq)
+
+is31Bit :: (Integral a) => a -> Bool
+is31Bit i = (i >=0 && i < 0x80000000) 
+
 
 -- Helper function to parse a hard path
 parseHard :: String -> Maybe HardPath
