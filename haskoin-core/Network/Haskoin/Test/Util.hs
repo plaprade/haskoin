@@ -1,9 +1,11 @@
 module Network.Haskoin.Test.Util where
 
-import qualified Data.ByteString       as BS
-import           Data.Time.Clock       (UTCTime (..))
-import           Data.Time.Clock.POSIX (posixSecondsToUTCTime)
-import           Data.Word             (Word32)
+import qualified Data.ByteString         as BS
+import           Data.String.Conversions (cs)
+import           Data.Text               (Text)
+import           Data.Time.Clock         (UTCTime (..))
+import           Data.Time.Clock.POSIX   (posixSecondsToUTCTime)
+import           Data.Word               (Word32)
 import           Test.QuickCheck
 
 -- | Arbitrary strict ByteString
@@ -25,8 +27,11 @@ arbitraryUTCTime = do
     return $ posixSecondsToUTCTime $ realToFrac w
 
 -- | Generate a Maybe from a Gen a
-arbitraryMaybe :: Gen a -> Gen (Maybe a)
-arbitraryMaybe g = frequency [ (1, return Nothing)
-                             , (5, Just <$> g)
-                             ]
+genMaybe :: Gen a -> Gen (Maybe a)
+genMaybe g = frequency [ (1, return Nothing)
+                       , (5, Just <$> g)
+                       ]
+
+arbitraryText :: Gen Text
+arbitraryText = cs <$> (arbitrary :: Gen String)
 

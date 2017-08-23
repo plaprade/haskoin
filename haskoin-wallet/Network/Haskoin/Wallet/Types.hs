@@ -31,7 +31,6 @@ module Network.Haskoin.Wallet.Types
 , TxCompleteRes(..)
 , ListResult(..)
 , RescanRes(..)
-, JsonSyncBlock(..)
 , JsonBlock(..)
 , Notif(..)
 , BlockInfo(..)
@@ -235,6 +234,7 @@ data OfflineTxData = OfflineTxData
     { offlineTxDataTx       :: !Tx
     , offlineTxDataCoinData :: ![CoinSignData]
     }
+    deriving (Eq, Show)
 
 $(deriveJSON (dropFieldLabel 13) ''OfflineTxData)
 
@@ -417,6 +417,15 @@ data JsonCoin = JsonCoin
 
 $(deriveJSON (dropFieldLabel 8) ''JsonCoin)
 
+data JsonBlock = JsonBlock
+    { jsonBlockHash   :: !BlockHash
+    , jsonBlockHeight :: !BlockHeight
+    , jsonBlockPrev   :: !BlockHash
+    , jsonBlockTxs    :: ![JsonTx]
+    } deriving (Eq, Show, Read)
+
+$(deriveJSON (dropFieldLabel 9) ''JsonBlock)
+
 {- Response Types -}
 
 data TxCompleteRes = TxCompleteRes
@@ -429,7 +438,7 @@ $(deriveJSON (dropFieldLabel 10) ''TxCompleteRes)
 data ListResult a = ListResult
     { listResultItems :: ![a]
     , listResultTotal :: !Word32
-    }
+    } deriving (Eq, Show, Read)
 
 $(deriveJSON (dropFieldLabel 10) ''ListResult)
 
@@ -444,23 +453,6 @@ data WalletResponse a
     deriving (Eq, Show)
 
 $(deriveJSON (dropSumLabels 8 8 "status") ''WalletResponse)
-
-data JsonSyncBlock = JsonSyncBlock
-    { jsonSyncBlockHash   :: !BlockHash
-    , jsonSyncBlockHeight :: !BlockHeight
-    , jsonSyncBlockPrev   :: !BlockHash
-    , jsonSyncBlockTxs    :: ![JsonTx]
-    } deriving (Eq, Show, Read)
-
-$(deriveJSON (dropFieldLabel 13) ''JsonSyncBlock)
-
-data JsonBlock = JsonBlock
-    { jsonBlockHash   :: !BlockHash
-    , jsonBlockHeight :: !BlockHeight
-    , jsonBlockPrev   :: !BlockHash
-    } deriving (Eq, Show, Read)
-
-$(deriveJSON (dropFieldLabel 9) ''JsonBlock)
 
 data Notif
     = NotifBlock !JsonBlock

@@ -919,6 +919,7 @@ importMerkles action expTxsLs notifChanM =
                         { jsonBlockHash = hash
                         , jsonBlockHeight = height
                         , jsonBlockPrev = nodePrev node
+                        , jsonBlockTxs = []
                         }
                 sendTxs notifChan ts hash height
   where

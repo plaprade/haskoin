@@ -8,7 +8,8 @@ module Network.Haskoin.Test
 , arbitraryBS1
 , arbitraryBSn
 , arbitraryUTCTime
-, arbitraryMaybe
+, genMaybe
+, arbitraryText
 
   -- * Crypto Arbitrary functions
 , arbitraryHash160

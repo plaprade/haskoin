@@ -20,6 +20,8 @@ module Network.Haskoin.Wallet
 , JsonAddr(..)
 , JsonCoin(..)
 , JsonTx(..)
+, JsonBlock(..)
+, Notif(..)
 
 -- *API Request Types
 , WalletRequest(..)

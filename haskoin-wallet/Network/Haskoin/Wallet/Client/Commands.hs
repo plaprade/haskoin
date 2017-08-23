@@ -516,7 +516,7 @@ cmdSync acc block ls = do
     r <- R.asks configReversePaging
     listAction page f $ \blocks -> do
         let blocks' = if r then reverse blocks else blocks
-        forM_ (blocks' :: [JsonSyncBlock]) $ liftIO . putStrLn . printSyncBlock
+        forM_ blocks' $ liftIO . putStrLn . printBlock
 
 cmdDecodeTx :: Handler ()
 cmdDecodeTx = do
@@ -929,14 +929,7 @@ printBlock JsonBlock{..} = unlines
     [ "Block Hash      : " ++ cs (blockHashToHex jsonBlockHash)
     , "Block Height    : " ++ show jsonBlockHeight
     , "Previous block  : " ++ cs (blockHashToHex jsonBlockPrev)
-    ]
-
-printSyncBlock :: JsonSyncBlock -> String
-printSyncBlock JsonSyncBlock{..} = unlines
-    [ "Block Hash      : " ++ cs (blockHashToHex jsonSyncBlockHash)
-    , "Block Height    : " ++ show jsonSyncBlockHeight
-    , "Previous block  : " ++ cs (blockHashToHex jsonSyncBlockPrev)
-    , "Transactions    : " ++ show (length jsonSyncBlockTxs)
+    , "Transactions    : " ++ show (length jsonBlockTxs)
     ]
 
 printNodeStatus :: Bool -> NodeStatus -> [String]

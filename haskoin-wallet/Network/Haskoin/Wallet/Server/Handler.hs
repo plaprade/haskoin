@@ -599,11 +599,11 @@ syncReq acc blockE lq@ListRequest{..} = runDB $ do
             let bts = blockTxs nodes ts
             return $ Just $ toJSON $ ListResult (map f bts) cnt
   where
-    f (block, txs') = JsonSyncBlock
-        { jsonSyncBlockHash   = nodeHash          block
-        , jsonSyncBlockHeight = nodeBlockHeight   block
-        , jsonSyncBlockPrev   = nodePrev          block
-        , jsonSyncBlockTxs    = map (toJsonTx acc Nothing) txs'
+    f (block, txs') = JsonBlock
+        { jsonBlockHash   = nodeHash          block
+        , jsonBlockHeight = nodeBlockHeight   block
+        , jsonBlockPrev   = nodePrev          block
+        , jsonBlockTxs    = map (toJsonTx acc Nothing) txs'
         }
     showBlock = case blockE of
         Left  e -> show e
