@@ -52,7 +52,7 @@ import           Database.Esqueleto                    (from, val, where_,
                                                         (&&.), (<=.), (==.),
                                                         (^.))
 import           Database.Persist.Sql                  (ConnectionPool,
-                                                        runMigration)
+                                                        runMigrationSilent)
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Node.BlockChain
@@ -220,8 +220,8 @@ initDatabase cfg = do
     pool <- getDatabasePool dbCfg
     -- Initialize wallet database
     flip runDBPool pool $ do
-        _ <- runMigration migrateWallet
-        _ <- runMigration migrateHeaderTree
+        _ <- runMigrationSilent migrateWallet
+        _ <- runMigrationSilent migrateHeaderTree
         initWallet $ configBloomFP cfg
     return pool
 

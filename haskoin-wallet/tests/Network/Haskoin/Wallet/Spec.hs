@@ -2,7 +2,6 @@ module Network.Haskoin.Wallet.Spec where
 
 import           Control.Concurrent.Async
 import qualified Control.Monad.Logger            as L
-import           Control.Monad.Reader
 import qualified Control.Monad.Trans.Resource    as R
 import qualified Data.Aeson                      as J
 import           Data.Default                    (def)
@@ -18,43 +17,59 @@ import           Test.QuickCheck
 
 apiSpec :: Spec
 apiSpec = describe "Wallet API" $ do
-    it "Can create a new account" $ withTestServer $ do
-        let newAcc = NewAccount
-                { newAccountName     = "Hello World"
-                , newAccountType     = AccountRegular
-                , newAccountMnemonic = Nothing
-                , newAccountPassword = Nothing
-                , newAccountEntropy  = Nothing
-                , newAccountMaster   = Nothing
-                , newAccountDeriv    = Nothing
-                , newAccountKeys     = []
-                , newAccountReadOnly = False
-                }
-        (Right (ResponseValid (Just res))) <- api $ NewAccountReq newAcc
-        liftIO $ jsonAccountName res `shouldBe` "Hello World"
+    it "replies with the right message types" $ withTestServer $ \ctx -> do
+        apiValid ctx (NewAccountReq defNewAccount)
+            `shouldNotReturn` (Nothing :: Maybe JsonAccount)
+        return ()
+
+{- Testing functions -}
+
+
+{- Testing Types -}
+
+defNewAccount :: NewAccount
+defNewAccount = NewAccount
+    { newAccountName     = "Hello World"
+    , newAccountType     = AccountRegular
+    , newAccountMnemonic = Nothing
+    , newAccountPassword = Nothing
+    , newAccountEntropy  = Nothing
+    , newAccountMaster   = Nothing
+    , newAccountDeriv    = Nothing
+    , newAccountKeys     = []
+    , newAccountReadOnly = False
+    }
 
 {- Testing Utilities -}
 
-type APITest = ReaderT ZMQ.Context IO
+apiValid :: J.FromJSON a
+         => ZMQ.Context -> WalletRequest -> IO (Maybe a)
+apiValid ctx req = do
+    resE <- api ctx req
+    case resE of
+        Right (ResponseValid resM)-> return resM
+        Right (ResponseError err) -> do
+            expectationFailure $ cs err
+            return Nothing
+        Left err -> do
+            expectationFailure $ cs err
+            return Nothing
 
-api :: J.FromJSON a
-    => WalletRequest
-    -> APITest (Either String (WalletResponse a))
-api req = do
-    ctx <- ask
-    liftIO $
-        ZMQ.withSocket ctx ZMQ.Req $ \sock -> do
-            ZMQ.setLinger (ZMQ.restrict (0 :: Int)) sock
-            ZMQ.connect sock socket
-            ZMQ.send sock [] (cs $ J.encode req)
-            J.eitherDecode . cs <$> ZMQ.receive sock
+api :: J.FromJSON a => ZMQ.Context -> WalletRequest
+    -> IO (Either String (WalletResponse a))
+api ctx req = do
+    ZMQ.withSocket ctx ZMQ.Req $ \sock -> do
+        ZMQ.setLinger (ZMQ.restrict (0 :: Int)) sock
+        ZMQ.connect sock socket
+        ZMQ.send sock [] (cs $ J.encode req)
+        J.eitherDecode . cs <$> ZMQ.receive sock
 
-withTestServer :: APITest () -> IO ()
+withTestServer :: (ZMQ.Context -> IO ()) -> IO ()
 withTestServer test =
     ZMQ.withContext $ \ctx -> do
         withAsync (memoryServer ctx) $ \a -> do
             link a
-            runReaderT test ctx
+            test ctx
             cancel a
 
 memoryServer :: ZMQ.Context -> IO ()
