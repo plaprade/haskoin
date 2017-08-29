@@ -14,16 +14,10 @@ tests =
     [ testGroup "Serialize & de-serialize types to JSON"
         [ testProperty "TxType" (metaID :: TxType -> Bool)
         , testProperty "TxConfidence" (metaID :: TxConfidence -> Bool)
-        , testProperty "AddressInfo" (metaID :: AddressInfo -> Bool)
-        , testProperty "BalanceInfo" (metaID :: BalanceInfo -> Bool)
         , testProperty "AccountType" (metaID :: AccountType -> Bool)
         , testProperty "NewAccount" (metaID :: NewAccount -> Bool)
         , testProperty "ListRequest" (metaID :: ListRequest -> Bool)
-        , testProperty "CoinSignData" (metaID :: CoinSignData -> Bool)
-        , testProperty "OfflineTxData" (metaID :: OfflineTxData -> Bool)
         , testProperty "CreateTx" (metaID :: CreateTx -> Bool)
-        , testProperty "SignTx" (metaID :: SignTx -> Bool)
-        , testProperty "NodeAction" (metaID :: NodeAction -> Bool)
         , testProperty "AddressType" (metaID :: AddressType -> Bool)
         , testProperty "WalletRequest" (metaID :: WalletRequest -> Bool)
         -- JSON types
@@ -33,6 +27,10 @@ tests =
         , testProperty "JsonCoin" (metaID :: JsonCoin -> Bool)
         , testProperty "JsonBlock" (metaID :: JsonBlock -> Bool)
         -- Result types
+        , testProperty "CoinSignData" (metaID :: CoinSignData -> Bool)
+        , testProperty "OfflineTxData" (metaID :: OfflineTxData -> Bool)
+        , testProperty "AddressInfo" (metaID :: AddressInfo -> Bool)
+        , testProperty "BalanceInfo" (metaID :: BalanceInfo -> Bool)
         , testProperty "TxCompleteRes" (metaID :: TxCompleteRes -> Bool)
         , testProperty "ListResult" (metaID :: ListResult JsonTx -> Bool)
         , testProperty "RescanRes" (metaID :: ListResult JsonTx -> Bool)

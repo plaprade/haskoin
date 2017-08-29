@@ -1,25 +1,25 @@
 module Main where
 
-import           Network.Haskoin.Wallet           (Config(..),
-                                                   WalletRequest(..), WalletResponse(..),
-                                                   AddressType(..),   OutputFormat(..),
-                                                   SPVMode(..),       NodeAction(..))
-
-import           Network.Haskoin.Wallet.Server    (runSPVServerWithContext)
-import           Network.Haskoin.Wallet.Internals (BTCNode(..), Notif(..))
-import qualified Network.Haskoin.Node.STM       as Node
-
+import qualified Control.Concurrent               as Con
+import qualified Control.Exception                as Except
+import qualified Control.Monad                    as M
+import qualified Control.Monad.Logger             as Log
+import qualified Control.Monad.Trans.Resource     as Resource
+import qualified Data.Aeson                       as JSON
+import qualified Data.Aeson.Encode.Pretty         as PrettyJSON
+import qualified Data.HashMap.Strict              as HM
 import           Data.String.Conversions          (cs)
-import qualified System.ZMQ4                    as ZMQ
-import qualified Control.Monad.Logger           as Log
-import qualified Data.HashMap.Strict            as HM
-import qualified Database.Persist.Sqlite        as DB
-import qualified Control.Monad.Trans.Resource   as Resource
-import qualified Data.Aeson                     as JSON
-import qualified Control.Concurrent             as Con
-import qualified Data.Aeson.Encode.Pretty       as PrettyJSON
-import qualified Control.Monad                  as M
-import qualified Control.Exception              as Except
+import qualified Database.Persist.Sqlite          as DB
+import qualified Network.Haskoin.Node.STM         as Node
+import           Network.Haskoin.Wallet           (AddressType (..),
+                                                   Config (..),
+                                                   OutputFormat (..),
+                                                   SPVMode (..),
+                                                   WalletRequest (..),
+                                                   WalletResponse (..))
+import           Network.Haskoin.Wallet.Internals (BTCNode (..), Notif (..))
+import           Network.Haskoin.Wallet.Server    (runSPVServerWithContext)
+import qualified System.ZMQ4                      as ZMQ
 
 
 databaseConf :: DB.SqliteConf
@@ -62,7 +62,7 @@ runWallet cfg ctx = run $ runSPVServerWithContext cfg ctx
 
 cmdGetStatus :: ZMQ.Context -> IO Node.NodeStatus
 cmdGetStatus ctx =
-    sendCmdOrFail (NodeActionReq NodeActionStatus) ctx >>=
+    sendCmdOrFail NodeStatusReq ctx >>=
     \res -> case res of
         Nothing     -> error "ERROR: Status command: no response."
         Just status -> return status

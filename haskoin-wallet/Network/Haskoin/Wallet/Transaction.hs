@@ -997,22 +997,20 @@ createWalletTx
     :: (MonadIO m, MonadThrow m, MonadBase IO m, MonadResource m)
         => Entity Account        -- ^ Account Entity
         -> Maybe (TBMChan Notif) -- ^ Notification channel
-        -> Maybe XPrvKey         -- ^ Key if not provided by account
-        -> [(Address,Word64)]    -- ^ List of recipient addresses and amounts
-        -> Word64                -- ^ Fee per 1000 bytes
-        -> Word32                -- ^ Minimum confirmations
-        -> Bool                  -- ^ Should fee be paid by recipient
-        -> Bool                  -- ^ Should the transaction be signed
+        -> CreateTx              -- ^ New tx information
         -> SqlPersistT m (WalletTx, [WalletAddr])
         -- ^ (New transaction hash, Completed flag)
-createWalletTx accE@(Entity ai acc) notifM masterM dests fee minConf rcptFee sign = do
+createWalletTx accE@(Entity ai acc) notifM CreateTx{..} = do
     -- Build an unsigned transaction from the given recipient values and fee
     (unsignedTx, inCoins, newChangeAddrs) <-
-        buildUnsignedTx accE dests fee minConf rcptFee
+        buildUnsignedTx accE createTxRecipients
+                             createTxFee
+                             createTxMinConf
+                             createTxRcptFee
     -- Sign our new transaction if signing was requested
     let dat = map toCoinSignData inCoins
-        tx | sign      = signOfflineTx acc masterM unsignedTx dat
-           | otherwise = unsignedTx
+        tx | createTxSign = signOfflineTx acc createTxSignKey unsignedTx dat
+           | otherwise    = unsignedTx
     -- Import the transaction in the wallet either as a network transaction if
     -- it is complete, or as an offline transaction otherwise.
     (res, newAddrs) <- importTx' tx notifM ai inCoins

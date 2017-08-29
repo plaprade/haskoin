@@ -388,7 +388,7 @@ createTxReq :: ( MonadLoggerIO m, MonadBaseControl IO m, MonadBase IO m
             => AccountName
             -> CreateTx
             -> Handler m (Maybe Value)
-createTxReq name (CreateTx rs fee minconf rcptFee sign masterM) = do
+createTxReq name ctx@(CreateTx rs fee minconf rcptFee sign _) = do
     $(logInfo) $ format $ unlines
         [ "CreateTx"
         , "  Account name: " ++ unpack name
@@ -404,8 +404,7 @@ createTxReq name (CreateTx rs fee minconf rcptFee sign masterM) = do
     (bb, txRes, newAddrs) <- runDB $ do
         accE <- getAccount name
         bb   <- walletBestBlock
-        (txRes, newAddrs) <- createWalletTx
-            accE (Just notif) masterM rs fee minconf rcptFee sign
+        (txRes, newAddrs) <- createWalletTx accE (Just notif) ctx
         return (bb, txRes, newAddrs)
 
     whenOnline $ do
@@ -448,8 +447,9 @@ importTxReq name tx = do
 signTxReq :: ( MonadLoggerIO m, MonadBaseControl IO m, MonadBase IO m
              , MonadThrow m, MonadResource m
              )
-          => AccountName -> SignTx -> Handler m (Maybe Value)
-signTxReq name (SignTx txid masterM) = do
+          => AccountName -> TxHash -> Maybe XPrvKey
+          -> Handler m (Maybe Value)
+signTxReq name txid masterM = do
     $(logInfo) $ format $ unlines
         [ "SignTx"
         , "  Account name: " ++ unpack name
@@ -550,30 +550,32 @@ balanceReq name minconf offline = do
         accountBalance ai minconf offline
     return $ Just $ toJSON bal
 
-nodeActionReq :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m)
-              => NodeAction -> Handler m (Maybe Value)
-nodeActionReq action = case action of
-    NodeActionRescan tM -> do
-        t <- case tM of
-            Just t  -> return $ adjustFCTime t
-            Nothing -> do
-                timeM <- runDB firstAddrTime
-                maybe err (return . adjustFCTime) timeM
-        $(logInfo) $ format $ unlines
-            [ "Node Rescan"
-            , "  Timestamp: " ++ show t
-            ]
-        whenOnline $ do
-            runDB resetRescan
-            runNode $ atomicallyNodeT $ rescanTs t
-        return $ Just $ toJSON $ RescanRes t
-    NodeActionStatus -> do
-        $(logInfo) $ format "Node Status"
-        status <- runNode $ atomicallyNodeT nodeStatus
-        return $ Just $ toJSON status
+nodeRescanReq :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m)
+              => Maybe Word32 -> Handler m (Maybe Value)
+nodeRescanReq tM = do
+    t <- case tM of
+        Just t  -> return $ adjustFCTime t
+        Nothing -> do
+            timeM <- runDB firstAddrTime
+            maybe err (return . adjustFCTime) timeM
+    $(logInfo) $ format $ unlines
+        [ "Node Rescan"
+        , "  Timestamp: " ++ show t
+        ]
+    whenOnline $ do
+        runDB resetRescan
+        runNode $ atomicallyNodeT $ rescanTs t
+    return $ Just $ toJSON $ RescanRes t
   where
     err = throwM $ WalletException
         "No keys have been generated in the wallet"
+
+nodeStatusReq :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m)
+              => Handler m (Maybe Value)
+nodeStatusReq = do
+    $(logInfo) $ format "Node Status"
+    status <- runNode $ atomicallyNodeT nodeStatus
+    return $ Just $ toJSON status
 
 syncReq :: (MonadThrow m, MonadLoggerIO m, MonadBaseControl IO m)
         => AccountName

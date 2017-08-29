@@ -488,15 +488,16 @@ dispatchRequest req = fmap ResponseValid $ case req of
     AddrTxsReq n i t p        -> addrTxsReq n i t p
     CreateTxReq n c           -> createTxReq n c
     ImportTxReq n t           -> importTxReq n t
-    SignTxReq n s             -> signTxReq n s
+    SignTxReq n t s           -> signTxReq n t s
     TxReq n h                 -> txReq n h
     DeleteTxReq t             -> deleteTxReq t
     OfflineTxReq n h          -> offlineTxReq n h
     SignOfflineTxReq n k t c  -> signOfflineTxReq n k t c
     BalanceReq n mc o         -> balanceReq n mc o
-    NodeActionReq na          -> nodeActionReq na
-    SyncReq a n b             -> syncReq a (Right n) b
+    SyncBlockReq a n b        -> syncReq a (Right n) b
     SyncHeightReq a n b       -> syncReq a (Left n) b
     BlockInfoReq l            -> blockInfoReq l
+    NodeRescanReq na          -> nodeRescanReq na
+    NodeStatusReq             -> nodeStatusReq
     StopServerReq             -> stopServerReq
 

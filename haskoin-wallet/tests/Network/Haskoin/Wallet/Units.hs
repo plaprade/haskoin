@@ -1209,11 +1209,13 @@ testImportMultisig = do
         . testTx
 
     -- Create a transaction which has 0 signatures in ms1
-    tx1 <- fst <$> createWalletTx accE1 Nothing Nothing
-        [ ( fromJust $ base58ToAddr "3AV9s2W9atAaChWdwTpRv8qvTHcV7L1zyj"
-          , 5000000
-          )
-        ] 10000 0 False True
+    tx1 <- fst <$> createWalletTx accE1 Nothing
+           ( CreateTx
+               [ ( fromJust $ base58ToAddr "3AV9s2W9atAaChWdwTpRv8qvTHcV7L1zyj"
+                 , 5000000
+                 )
+               ] 10000 0 False True Nothing
+            )
 
     liftIO $ assertEqual "Confidence is not offline" TxOffline $
         walletTxConfidence tx1
@@ -1421,11 +1423,13 @@ testDeleteUnsignedTx = do
         . testTx
 
     -- Create a transaction which has 0 signatures in ms1
-    tx1 <- fst <$> createWalletTx accE1 Nothing Nothing
-        [ ( fromJust $ base58ToAddr "3AV9s2W9atAaChWdwTpRv8qvTHcV7L1zyj"
-          , 5000000
-          )
-        ] 10000 0 False True
+    tx1 <- fst <$> createWalletTx accE1 Nothing
+           ( CreateTx
+               [ ( fromJust $ base58ToAddr "3AV9s2W9atAaChWdwTpRv8qvTHcV7L1zyj"
+                 , 5000000
+                 )
+               ] 10000 0 False True Nothing
+            )
 
     liftIO $ assertEqual "Confidence is not offline" TxOffline $
         walletTxConfidence tx1

@@ -69,14 +69,6 @@ instance Arbitrary CreateTx where
                          <*> arbitrary
                          <*> genMaybe arbitraryXPrvKey
 
-instance Arbitrary SignTx where
-    arbitrary = SignTx <$> arbitraryTxHash <*> genMaybe arbitraryXPrvKey
-
-instance Arbitrary NodeAction where
-    arbitrary = oneof [ NodeActionRescan <$> arbitrary
-                      , return NodeActionStatus
-                      ]
-
 instance Arbitrary AddressType where
     arbitrary = elements [ AddressInternal, AddressExternal ]
 
@@ -121,7 +113,9 @@ instance Arbitrary WalletRequest where
         , CreateTxReq <$> arbitraryText <*> arbitrary
         , ImportTxReq <$> arbitraryText
                       <*> arbitraryTx
-        , SignTxReq <$> arbitraryText <*> arbitrary
+        , SignTxReq <$> arbitraryText
+                    <*> arbitraryTxHash
+                    <*> genMaybe arbitraryXPrvKey
         , TxReq <$> arbitraryText <*> arbitraryTxHash
         , DeleteTxReq <$> arbitraryTxHash
         , OfflineTxReq <$> arbitraryText <*> arbitraryTxHash
@@ -130,10 +124,11 @@ instance Arbitrary WalletRequest where
                            <*> arbitraryTx
                            <*> listOf arbitrary
         , BalanceReq <$> arbitraryText <*> arbitrary <*> arbitrary
-        , NodeActionReq <$> arbitrary
-        , SyncReq <$> arbitraryText <*> arbitraryBlockHash <*> arbitrary
+        , SyncBlockReq <$> arbitraryText <*> arbitraryBlockHash <*> arbitrary
         , SyncHeightReq <$> arbitraryText <*> arbitrary <*> arbitrary
         , BlockInfoReq <$> listOf arbitraryBlockHash
+        , NodeRescanReq <$> arbitrary
+        , return NodeStatusReq
         , return StopServerReq
         ]
 

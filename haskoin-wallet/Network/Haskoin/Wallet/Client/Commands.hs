@@ -423,7 +423,7 @@ cmdSign :: String -> String -> Handler ()
 cmdSign name txidStr = case txidM of
     Just txid -> do
         masterM <- askSigningKeys name
-        resE <- sendZmq (SignTxReq (T.pack name) $ SignTx txid masterM)
+        resE <- sendZmq (SignTxReq (T.pack name) txid masterM)
         handleResponse resE $ liftIO . putStr . printTx Nothing
     _ -> error "Could not parse txid"
   where
@@ -476,7 +476,7 @@ cmdRescan timeLs = do
             str:_ -> case readMaybe str of
                 Nothing -> error "Could not decode time"
                 Just t -> Just t
-    resE <- sendZmq (NodeActionReq $ NodeActionRescan timeM)
+    resE <- sendZmq (NodeRescanReq timeM)
     handleResponse resE $ \(RescanRes ts) ->
         liftIO $ putStrLn $ unwords [ "Timestamp:", show ts]
 
@@ -507,7 +507,7 @@ cmdSync :: String -> String -> [String] -> Handler ()
 cmdSync acc block ls = do
     let page = fromMaybe 1 $ listToMaybe ls >>= readMaybe
         f = case length block of
-            64 -> SyncReq (cs acc) $
+            64 -> SyncBlockReq (cs acc) $
                 fromMaybe (error "Could not decode block id") $
                 hexToBlockHash $ cs block
             _  -> SyncHeightReq (cs acc) $
@@ -537,7 +537,7 @@ cmdVersion = liftIO $ do
 cmdStatus :: Handler ()
 cmdStatus = do
     v <- R.asks configVerbose
-    resE <- sendZmq (NodeActionReq NodeActionStatus)
+    resE <- sendZmq NodeStatusReq
     handleResponse resE $ mapM_ (liftIO . putStrLn) . printNodeStatus v
 
 cmdKeyPair :: Handler ()
@@ -552,7 +552,7 @@ cmdBlockInfo headers = do
     -- Show best block if no arguments are provided
     hashL <- if null headers then
             -- Fetch best block hash from status msg, and return as list
-            (: []) . parseRes <$> sendZmq (NodeActionReq NodeActionStatus)
+            (: []) . parseRes <$> sendZmq NodeStatusReq
         else
             return (map fromString headers)
     sendZmq (BlockInfoReq hashL) >>=
