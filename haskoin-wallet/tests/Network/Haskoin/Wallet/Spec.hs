@@ -4,10 +4,12 @@ import           Control.Concurrent.Async
 import qualified Control.Monad.Logger            as L
 import qualified Control.Monad.Trans.Resource    as R
 import qualified Data.Aeson                      as J
+import qualified Data.Text                       as T
 import           Data.Default                    (def)
 import qualified Data.HashMap.Strict             as HM
 import           Data.String.Conversions         (cs)
 import qualified Database.Persist.Sqlite         as DB
+import           Network.Haskoin.Crypto
 import           Network.Haskoin.Wallet
 import           Network.Haskoin.Wallet.Server
 import           Network.Haskoin.Wallet.Settings
@@ -18,26 +20,77 @@ import           Test.QuickCheck
 apiSpec :: Spec
 apiSpec = describe "Wallet API" $ do
     it "replies with the right message types" $ withTestServer $ \ctx -> do
-        apiValid ctx (NewAccountReq defNewAccount)
+        apiValid ctx (NewAccountReq newMs1)
+            `shouldNotReturn` (Nothing :: Maybe JsonAccount)
+        apiValid ctx (AddPubKeysReq "Multisig A" [snd keys2])
             `shouldNotReturn` (Nothing :: Maybe JsonAccount)
         return ()
 
-{- Testing functions -}
+{- Testing defenitions -}
 
+pwd :: T.Text
+pwd = "correct horse battery staple"
 
-{- Testing Types -}
+mnem1 :: T.Text
+mnem1 = "snow senior nerve virus fabric now fringe clip marble interest analyst can"
 
-defNewAccount :: NewAccount
-defNewAccount = NewAccount
+mnem2 :: T.Text
+mnem2 = "bike palace cannon basic lazy head reflect shiver return arrow caught town"
+
+keys1 :: (XPrvKey, XPubKey)
+keys1 = ( "xprv9yHxeaLAZvxXb9VtJNesqk8avfN8misGAW9DUW9eacZJNqsfZxqKLmK5jfmvFideQqGesviJeagzSQYCuQySjgvt7TdfowKja5aJqbgyuNh"
+        , "xpub6CHK45s4QJWpodaMQQBtCt5KUhCdBBb7Xj4pGtZG8x6HFeCp7W9ZtZdZaxA34YtFAhuebiKqLqHLYoB8HDadGutW8kEH4HeMdeS1KJz8Uah"
+        )
+
+keys2 :: (XPrvKey, XPubKey)
+keys2 = ( "xprv9yopS25nKJeGStDY9Ve85Gub4ziF3o4M5cHdiceCtJtoNE8V7Q8umVw56eKkwipLMMYa33v32uWKCoxAiXDmPz8gaKUKXC4pv6bjEnijPkz"
+        , "xpub6CoAqXcg9gCZfNJ1FXB8SQrKd2YjTFnCSqDEX13pSeRnF2TdewTAKJFYwwx3DeWHNVJTYrBQgZHRZwHRF3omZKB3ZhyQNJvr2VYViiV7gC3"
+        )
+
+newAcc :: NewAccount
+newAcc = NewAccount
     { newAccountName     = "Hello World"
     , newAccountType     = AccountRegular
-    , newAccountMnemonic = Nothing
-    , newAccountPassword = Nothing
+    , newAccountMnemonic = Just mnem1
+    , newAccountPassword = Just pwd
     , newAccountEntropy  = Nothing
     , newAccountMaster   = Nothing
     , newAccountDeriv    = Nothing
     , newAccountKeys     = []
     , newAccountReadOnly = False
+    }
+
+newMs1 :: NewAccount
+newMs1 = NewAccount
+    { newAccountName     = "Multisig A"
+    , newAccountType     = AccountMultisig 2 2
+    , newAccountMnemonic = Just mnem1
+    , newAccountPassword = Just pwd
+    , newAccountEntropy  = Nothing
+    , newAccountMaster   = Nothing
+    , newAccountDeriv    = Just 1
+    , newAccountKeys     = []
+    , newAccountReadOnly = False
+    }
+
+newMs2 :: NewAccount
+newMs2 = NewAccount
+    { newAccountName     = "Multisig B"
+    , newAccountType     = AccountMultisig 2 2
+    , newAccountMnemonic = Just mnem2
+    , newAccountPassword = Just pwd
+    , newAccountEntropy  = Nothing
+    , newAccountMaster   = Nothing
+    , newAccountDeriv    = Just 2
+    , newAccountKeys     = []
+    , newAccountReadOnly = False
+    }
+
+defListRequest :: ListRequest
+defListRequest = ListRequest
+    { listOffset  = 0
+    , listLimit   = 10
+    , listReverse = False
     }
 
 {- Testing Utilities -}
