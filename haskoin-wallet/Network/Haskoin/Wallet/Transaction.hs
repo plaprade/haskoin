@@ -33,6 +33,9 @@ module Network.Haskoin.Wallet.Transaction
 , resetRescan
 
 -- *Helpers
+, fromTx
+, fromCoin
+, fromAddress
 , isCoinbaseTx
 , InCoinData(..)
 ) where
@@ -87,6 +90,8 @@ import           Network.Haskoin.Util
 import           Network.Haskoin.Wallet.Accounts
 import           Network.Haskoin.Wallet.Model
 import           Network.Haskoin.Wallet.Types
+import qualified Network.Haskoin.Wallet.Request as Q
+import qualified Network.Haskoin.Wallet.Response as R
 
 -- Input coin type with transaction and address information
 data InCoinData = InCoinData
@@ -111,11 +116,11 @@ data OutCoinData = OutCoinData
 -- | Get transactions.
 txs :: MonadIO m
     => Maybe TxConfidence
-    -> AccountId        -- ^ Account ID
-    -> ListRequest      -- ^ List request
+    -> AccountId   -- ^ Account ID
+    -> Q.List      -- ^ List request
     -> SqlPersistT m ([WalletTx], Word32)
     -- ^ List result
-txs conf ai ListRequest{..} = do
+txs conf ai Q.List{..} = do
     [cnt] <- fmap (map unValue) $ select $ from $ \t -> do
         cond t
         return countRows
@@ -137,11 +142,11 @@ txs conf ai ListRequest{..} = do
 {- List transactions for an account and address -}
 
 addrTxs :: MonadIO m
-        => Entity Account        -- ^ Account entity
-        -> Entity WalletAddr     -- ^ Address entity
-        -> ListRequest           -- ^ List request
+        => Entity Account     -- ^ Account entity
+        -> Entity WalletAddr  -- ^ Address entity
+        -> Q.List             -- ^ List request
         -> SqlPersistT m ([WalletTx], Word32)
-addrTxs (Entity ai _) (Entity addrI WalletAddr{..}) ListRequest{..} = do
+addrTxs (Entity ai _) (Entity addrI WalletAddr{..}) Q.List{..} = do
     let joinSpentCoin c2 s =
                 c2 ?. WalletCoinAccount ==. s ?. SpentCoinAccount
             &&. c2 ?. WalletCoinHash    ==. s ?. SpentCoinHash
@@ -260,7 +265,7 @@ getPendingTxs i =
 -- offline transaction.
 importTx :: (MonadIO m, MonadThrow m, MonadBase IO m, MonadResource m)
          => Tx               -- ^ Transaction to import
-         -> Maybe (TBMChan Notif)
+         -> Maybe (TBMChan R.Notif)
          -> AccountId        -- ^ Account ID
          -> SqlPersistT m ([WalletTx], [WalletAddr])
          -- ^ New transactions and addresses created
@@ -269,7 +274,7 @@ importTx tx notifChanM ai =
 
 importTx' :: (MonadIO m, MonadThrow m, MonadBase IO m, MonadResource m)
           => Tx                   -- ^ Transaction to import
-          -> Maybe (TBMChan Notif)
+          -> Maybe (TBMChan R.Notif)
           -> AccountId            -- ^ Account ID
           -> [InCoinData]         -- ^ Input coins
           -> SqlPersistT m ([WalletTx], [WalletAddr])
@@ -360,7 +365,7 @@ mergeNoSigHashTxs ai tx inCoins = do
 importOfflineTx
     :: (MonadIO m, MonadThrow m, MonadBase IO m, MonadResource m)
     => Tx
-    -> Maybe (TBMChan Notif)
+    -> Maybe (TBMChan R.Notif)
     -> AccountId
     -> [InCoinData]
     -> [Entity WalletTx]
@@ -410,7 +415,7 @@ importOfflineTx tx notifChanM ai inCoins spendingTxs = do
 importNetTx
     :: (MonadIO m, MonadThrow m, MonadBase IO m, MonadResource m)
     => Tx -- Network transaction to import
-    -> Maybe (TBMChan Notif)
+    -> Maybe (TBMChan R.Notif)
     -> SqlPersistT m ([WalletTx], [WalletAddr])
     -- ^ Returns the new transactions and addresses created
 importNetTx tx notifChanM = do
@@ -443,7 +448,7 @@ importNetTx tx notifChanM = do
                 Account{..} <-
                     fromMaybe (error "Velociraptors ate you") <$> get ai
                 liftIO $ atomically $ writeTBMChan notifChan $
-                    NotifTx $ toJsonTx accountName Nothing tx'
+                    R.NotifTx $ fromTx accountName Nothing tx'
         return (txRes, concat newAddrs)
   where
     sameKey e1 e2 = entityKey e1 == entityKey e2
@@ -608,7 +613,7 @@ spendInputs ai ti tx = do
 
 -- Build account transaction for the given input and output coins
 buildAccTxs :: MonadIO m
-            => Maybe (TBMChan Notif)
+            => Maybe (TBMChan R.Notif)
             -> Tx
             -> TxConfidence
             -> [InCoinData]
@@ -805,7 +810,7 @@ deleteTx txid = do
 
 -- Kill transactions and their children by ids.
 killTxIds :: MonadIO m
-          => Maybe (TBMChan Notif)
+          => Maybe (TBMChan R.Notif)
           -> [WalletTxId]
           -> SqlPersistT m ()
 killTxIds notifChanM txIds = do
@@ -835,7 +840,7 @@ killTxIds notifChanM txIds = do
                 Account{..} <-
                     fromMaybe (error "More velociraptors coming") <$> get ai
                 liftIO $ atomically $ writeTBMChan notifChan $
-                    NotifTx $ toJsonTx accountName Nothing tx
+                    R.NotifTx $ fromTx accountName Nothing tx
 
 
     -- This transaction doesn't spend any coins
@@ -848,7 +853,7 @@ killTxIds notifChanM txIds = do
 
 -- Kill transactions and their child transactions by hashes.
 killTxs :: MonadIO m
-        => Maybe (TBMChan Notif)
+        => Maybe (TBMChan R.Notif)
         -> [TxHash]
         -> SqlPersistT m ()
 killTxs notifChanM txHashes = do
@@ -862,7 +867,7 @@ killTxs notifChanM txHashes = do
 importMerkles :: MonadIO m
               => BlockChainAction
               -> [MerkleTxs]
-              -> Maybe (TBMChan Notif)
+              -> Maybe (TBMChan R.Notif)
               -> SqlPersistT m ()
 importMerkles action expTxsLs notifChanM =
     when (isBestChain action || isChainReorg action) $ do
@@ -915,11 +920,11 @@ importMerkles action expTxsLs notifChanM =
             -- Send notification for block
             forM_ notifChanM $ \notifChan -> do
                 liftIO $ atomically $ writeTBMChan notifChan $
-                    NotifBlock JsonBlock
-                        { jsonBlockHash = hash
-                        , jsonBlockHeight = height
-                        , jsonBlockPrev = nodePrev node
-                        , jsonBlockTxs = []
+                    R.NotifBlock R.Block
+                        { blockHash = hash
+                        , blockHeight = height
+                        , blockPrev = nodePrev node
+                        , blockTxs = []
                         }
                 sendTxs notifChan ts hash height
   where
@@ -927,7 +932,7 @@ importMerkles action expTxsLs notifChanM =
         let ai = walletTxAccount tx
         Account{..} <- fromMaybe (error "Dino crisis") <$> get ai
         liftIO $ atomically $ writeTBMChan notifChan $
-            NotifTx $ toJsonTx accountName (Just (hash, height)) tx
+            R.NotifTx $ fromTx accountName (Just (hash, height)) tx
 
 -- Helper function to set the best block and best block height in the DB.
 setBestBlock :: MonadIO m => BlockHash -> Word32 -> SqlPersistT m ()
@@ -949,7 +954,7 @@ walletBestBlock = do
 -- Revive a dead transaction. All transactions that are in conflict with this
 -- one will be killed.
 reviveTx :: MonadIO m
-         => Maybe (TBMChan Notif)
+         => Maybe (TBMChan R.Notif)
          -> Tx
          -> SqlPersistT m ()
 reviveTx notifChanM tx = do
@@ -988,19 +993,19 @@ reviveTx notifChanM tx = do
                 Account{..} <-
                     fromMaybe (error "Tyranossaurus Rex attacks") <$> get ai
                 liftIO $ atomically $ writeTBMChan notifChan $
-                    NotifTx $ toJsonTx accountName Nothing tx'
+                    R.NotifTx $ fromTx accountName Nothing tx'
 
 {- Transaction creation and signing (local wallet functions) -}
 
 -- | Create a transaction sending some coins to a list of recipient addresses.
 createWalletTx
     :: (MonadIO m, MonadThrow m, MonadBase IO m, MonadResource m)
-        => Entity Account        -- ^ Account Entity
-        -> Maybe (TBMChan Notif) -- ^ Notification channel
-        -> CreateTx              -- ^ New tx information
+        => Entity Account          -- ^ Account Entity
+        -> Maybe (TBMChan R.Notif) -- ^ Notification channel
+        -> Q.CreateTx              -- ^ New tx information
         -> SqlPersistT m (WalletTx, [WalletAddr])
         -- ^ (New transaction hash, Completed flag)
-createWalletTx accE@(Entity ai acc) notifM CreateTx{..} = do
+createWalletTx accE@(Entity ai acc) notifM Q.CreateTx{..} = do
     -- Build an unsigned transaction from the given recipient values and fee
     (unsignedTx, inCoins, newChangeAddrs) <-
         buildUnsignedTx accE createTxRecipients
@@ -1096,7 +1101,7 @@ buildUnsignedTx accE@(Entity ai acc) origDests origFee minConf rcptFee = do
     toOutPoint (InCoinData (Entity _ c) t _) =
         OutPoint (walletTxHash t) (walletCoinPos c)
     newChangeAddr change = do
-        let lq = ListRequest 0 0 False
+        let lq = Q.List 0 0 False
         (as, _) <- unusedAddresses accE AddressInternal lq
         case as of
             (a:_) -> do
@@ -1109,7 +1114,7 @@ buildUnsignedTx accE@(Entity ai acc) origDests origFee minConf rcptFee = do
 
 signAccountTx :: (MonadIO m, MonadThrow m, MonadBase IO m, MonadResource m)
               => Entity Account
-              -> Maybe (TBMChan Notif)
+              -> Maybe (TBMChan R.Notif)
               -> Maybe XPrvKey
               -> TxHash
               -> SqlPersistT m ([WalletTx], [WalletAddr])
@@ -1288,7 +1293,7 @@ addressBalances :: MonadIO m
                 -> AddressType
                 -> Word32
                 -> Bool
-                -> SqlPersistT m [(KeyIndex, BalanceInfo)]
+                -> SqlPersistT m [(KeyIndex, R.Balance)]
 addressBalances accE@(Entity ai _) iMin iMax addrType minconf offline = do
         -- We keep our joins flat to improve performance in SQLite.
     res <- select $ from $ \(x `LeftOuterJoin` c `LeftOuterJoin`
@@ -1341,13 +1346,13 @@ addressBalances accE@(Entity ai _) iMin iMax addrType minconf offline = do
     validConfidence = Just TxPending : Just TxBuilding :
                         [ Just TxOffline | offline ]
     f (Value i, Value inM, Value outM, Value newC, Value spentC) =
-        let b = BalanceInfo
-                    { balanceInfoInBalance  =
+        let b = R.Balance
+                    { balanceInBalance =
                         floor $ fromMaybe (0 :: Double) inM
-                    , balanceInfoOutBalance =
+                    , balanceOutBalance =
                         floor $ fromMaybe (0 :: Double) outM
-                    , balanceInfoCoins      = newC
-                    , balanceInfoSpentCoins = spentC
+                    , balanceCoins = newC
+                    , balanceSpentCoins = spentC
                     }
         in (i, b)
 
@@ -1359,4 +1364,67 @@ resetRescan = do
     P.deleteWhere ([] :: [P.Filter SpentCoin])
     P.deleteWhere ([] :: [P.Filter WalletTx])
     setBestBlock (headerHash genesisHeader) 0
+
+{- Helpers -}
+
+fromTx :: AccountName
+       -> Maybe (BlockHash, BlockHeight) -- ^ Current best block
+       -> WalletTx
+       -> R.Tx
+fromTx acc bbM tx = R.Tx
+    { txTxHash          = walletTxHash tx
+    , txNosigHash       = walletTxNosigHash tx
+    , txType            = walletTxType tx
+    , txInValue         = walletTxInValue tx
+    , txOutValue        = walletTxOutValue tx
+    , txValue           = fromIntegral (walletTxInValue tx) -
+                        fromIntegral (walletTxOutValue tx)
+    , txInputs          = walletTxInputs tx
+    , txOutputs         = walletTxOutputs tx
+    , txChange          = walletTxChange tx
+    , txTx              = walletTxTx tx
+    , txIsCoinbase      = walletTxIsCoinbase tx
+    , txConfidence      = walletTxConfidence tx
+    , txConfirmedBy     = walletTxConfirmedBy tx
+    , txConfirmedHeight = walletTxConfirmedHeight tx
+    , txConfirmedDate   = walletTxConfirmedDate tx
+    , txCreated         = walletTxCreated tx
+    , txAccount         = acc
+    , txConfirmations   = f =<< walletTxConfirmedHeight tx
+    , txBestBlock       = fst <$> bbM
+    , txBestBlockHeight = snd <$> bbM
+    }
+  where
+    f confirmedHeight = case bbM of
+        Just (_, h) -> return $ fromInteger $
+            max 0 $ toInteger h - toInteger confirmedHeight + 1
+        _ -> Nothing
+
+fromCoin :: WalletCoin
+         -> Maybe R.Tx      -- ^ Coin’s transaction
+         -> Maybe R.Address -- ^ Coin’s address
+         -> Maybe R.Tx      -- ^ Coin’s spending transaction
+         -> R.Coin
+fromCoin coin txM addrM spendM = R.Coin
+    { coinHash       = walletCoinHash coin
+    , coinPos        = walletCoinPos coin
+    , coinValue      = walletCoinValue coin
+    , coinScript     = walletCoinScript coin
+    , coinCreated    = walletCoinCreated coin
+    , coinTx         = txM
+    , coinAddress    = addrM
+    , coinSpendingTx = spendM
+    }
+
+fromAddress :: WalletAddr -> Maybe R.Balance -> R.Address
+fromAddress addr balM = R.Address
+    { addressAddress = walletAddrAddress addr
+    , addressIndex   = walletAddrIndex addr
+    , addressType    = walletAddrType addr
+    , addressLabel   = walletAddrLabel addr
+    , addressRedeem  = walletAddrRedeem addr
+    , addressKey     = walletAddrKey addr
+    , addressCreated = walletAddrCreated addr
+    , addressBalance = balM
+    }
 

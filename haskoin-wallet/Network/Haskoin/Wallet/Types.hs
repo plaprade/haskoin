@@ -1,50 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-module Network.Haskoin.Wallet.Types
-( AccountName
-
--- JSON Types
-, JsonAccount(..)
-, JsonAddr(..)
-, JsonCoin(..)
-, JsonTx(..)
-
--- Request Types
-, WalletRequest(..)
-, ListRequest(..)
-, NewAccount(..)
-, OfflineTxData(..)
-, CoinSignData(..)
-, CreateTx(..)
-, AccountType(..)
-, AddressType(..)
-, addrTypeIndex
-, TxType(..)
-, TxConfidence(..)
-, AddressInfo(..)
-, BalanceInfo(..)
-
--- Response Types
-, WalletResponse(..)
-, TxCompleteRes(..)
-, ListResult(..)
-, RescanRes(..)
-, JsonBlock(..)
-, Notif(..)
-, BlockInfo(..)
-
--- Helper Types
-, WalletException(..)
-, BTCNode(..)
-
--- *Helpers
-, splitSelect
-, splitUpdate
-, splitDelete
-, splitInsertMany_
-, join2
-, limitOffset
-) where
+module Network.Haskoin.Wallet.Types where
 
 import           Control.DeepSeq                        (NFData (..))
 import           Control.Exception                      (Exception)
@@ -77,13 +33,10 @@ import           Network.Haskoin.Script
 import           Network.Haskoin.Transaction
 import           Network.Haskoin.Util
 import           Network.Haskoin.Wallet.Database
-import           Network.Haskoin.Wallet.Types.BlockInfo
 
 type AccountName = Text
 
 -- TODO: Add NFData instances for all those types
-
-{- Request Types -}
 
 data TxType
     = TxIncoming
@@ -123,29 +76,19 @@ instance NFData AccountType where
         AccountRegular -> ()
         AccountMultisig m n -> rnf m `seq` rnf n
 
-data NewAccount = NewAccount
-    { newAccountName     :: !AccountName
-    , newAccountType     :: !AccountType
-    , newAccountMnemonic :: !(Maybe Text)
-    , newAccountPassword :: !(Maybe Text)
-    , newAccountEntropy  :: !(Maybe Word8)
-    , newAccountMaster   :: !(Maybe XPrvKey)
-    , newAccountDeriv    :: !(Maybe KeyIndex)
-    , newAccountKeys     :: ![XPubKey]
-    , newAccountReadOnly :: !Bool
-    }
+data AddressType
+    = AddressInternal
+    | AddressExternal
     deriving (Eq, Show, Read)
 
-$(deriveJSON (dropFieldLabel 10) ''NewAccount)
+$(deriveJSON (dropSumLabels 7 0 "") ''AddressType)
 
-data ListRequest = ListRequest
-    { listOffset  :: !Word32
-    , listLimit   :: !Word32
-    , listReverse :: !Bool
-    }
-    deriving (Eq, Show, Read)
+instance NFData AddressType where
+    rnf x = x `seq` ()
 
-$(deriveJSON (dropFieldLabel 4) ''ListRequest)
+addrTypeIndex :: AddressType -> KeyIndex
+addrTypeIndex AddressExternal = 0
+addrTypeIndex AddressInternal = 1
 
 data CoinSignData = CoinSignData
     { coinSignOutPoint     :: !OutPoint
@@ -177,173 +120,6 @@ instance S.Serialize CoinSignData where
             S.put $ VarInt $ fromIntegral $ BS.length bs
             S.putByteString bs
 
-data CreateTx = CreateTx
-    { createTxRecipients :: ![(Address, Word64)]
-    , createTxFee        :: !Word64
-    , createTxMinConf    :: !Word32
-    , createTxRcptFee    :: !Bool
-    , createTxSign       :: !Bool
-    , createTxSignKey    :: !(Maybe XPrvKey)
-    } deriving (Eq, Show)
-
-$(deriveJSON (dropFieldLabel 8) ''CreateTx)
-
-data AddressType
-    = AddressInternal
-    | AddressExternal
-    deriving (Eq, Show, Read)
-
-$(deriveJSON (dropSumLabels 7 0 "") ''AddressType)
-
-instance NFData AddressType where
-    rnf x = x `seq` ()
-
-addrTypeIndex :: AddressType -> KeyIndex
-addrTypeIndex AddressExternal = 0
-addrTypeIndex AddressInternal = 1
-
-data WalletRequest
-    = AccountReq       { accNameReq   :: !AccountName }
-    | AccountsReq      { locatorReq   :: !ListRequest }
-    | NewAccountReq    { newAccReq    :: !NewAccount  }
-    | RenameAccountReq { oldAccName   :: !AccountName
-                       , newAccName   :: !AccountName
-                       }
-    | AddPubKeysReq    { accNameReq   :: !AccountName
-                       , keysReq      :: ![XPubKey]
-                       }
-    | SetAccountGapReq { accNameReq   :: !AccountName
-                       , gapReq       :: !Word32
-                       }
-    | AddrsReq         { accNameReq   :: !AccountName
-                       , addrTypeReq  :: !AddressType
-                       , minConfReq   :: !Word32
-                       , offlineReq   :: !Bool
-                       , locatorReq   :: !ListRequest
-                       }
-    | UnusedAddrsReq   { accNameReq   :: !AccountName
-                       , addrTypeReq  :: !AddressType
-                       , locator      :: !ListRequest
-                       }
-    | AddressReq       { accNameReq   :: !AccountName
-                       , addrIndexReq :: !KeyIndex
-                       , addrTypeReq  :: !AddressType
-                       , minConfReq   :: !Word32
-                       , offlineReq   :: !Bool
-                       }
-    | PubKeyIndexReq   { accNameReq   :: !AccountName
-                       , keyReq       :: !PubKeyC
-                       , addrTypeReq  :: !AddressType
-                       }
-    | SetAddrLabelReq  { accNameReq   :: !AccountName
-                       , addrIndexReq :: !KeyIndex
-                       , addrTypeReq  :: !AddressType
-                       , labelReq     :: !Text
-                       }
-    | GenerateAddrsReq { accNameReq   :: !AccountName
-                       , addrIndexReq :: !KeyIndex
-                       , addrTypeReq  :: !AddressType
-                       }
-    | TxsReq           { accNameReq   :: !AccountName
-                       , locatorReq   :: !ListRequest
-                       }
-    | PendingTxsReq    { accNameReq   :: !AccountName
-                       , locatorReq   :: !ListRequest
-                       }
-    | DeadTxsReq       { accNameReq   :: !AccountName
-                       , locatorReq   :: !ListRequest
-                       }
-    | AddrTxsReq       { accNameReq   :: !AccountName
-                       , addrIndexReq :: !KeyIndex
-                       , addrTypeReq  :: !AddressType
-                       , locatorReq   :: !ListRequest
-                       }
-    | CreateTxReq      { accNameReq   :: !AccountName
-                       , newTxReq     :: !CreateTx
-                       }
-    | ImportTxReq      { accNameReq   :: !AccountName
-                       , txValReq     :: !Tx
-                       }
-    | SignTxReq        { accNameReq   :: !AccountName
-                       , txHashReq    :: !TxHash
-                       , signKeyReq   :: !(Maybe XPrvKey)
-                       }
-    | TxReq            { accNameReq   :: !AccountName
-                       , txHashReq    :: !TxHash
-                       }
-    | DeleteTxReq      { txHashReq    :: !TxHash }
-    | OfflineTxReq     { accNameReq   :: !AccountName
-                       , txHashReq    :: !TxHash
-                       }
-    | SignOfflineTxReq { accNameReq   :: !AccountName
-                       , signKeyReq   :: !(Maybe XPrvKey)
-                       , txValReq     :: !Tx
-                       , coinDataReq  :: ![CoinSignData]
-                       }
-    | BalanceReq       { accNameReq   :: !AccountName
-                       , minConfReq   :: !Word32
-                       , offlineReq   :: !Bool
-                       }
-    | SyncBlockReq     { accNameReq   :: !AccountName
-                       , blockHashReq :: !BlockHash
-                       , locatorReq   :: !ListRequest
-                       }
-    | SyncHeightReq    { accNameReq   :: !AccountName
-                       , heightReq    :: !BlockHeight
-                       , locatorReq   :: !ListRequest
-                       }
-    | BlockInfoReq     { blocksReq    :: ![BlockHash] }
-    | NodeRescanReq    { timestampReq :: !(Maybe Word32) }
-    | NodeStatusReq
-    | StopServerReq
-        deriving (Show, Eq)
-
-$(deriveJSON
-    defaultOptions
-        { constructorTagModifier = map toLower . reverse . drop 3 . reverse
-        , fieldLabelModifier = map toLower . reverse . drop 3 . reverse
-        , sumEncoding = defaultTaggedObject
-            { tagFieldName = "method" }
-        }
-    ''WalletRequest
- )
-
-{- Response Types -}
-
-data AddressInfo = AddressInfo
-    { addressInfoAddress :: !Address
-    , addressInfoValue   :: !(Maybe Word64)
-    , addressInfoIsLocal :: !Bool
-    }
-    deriving (Eq, Show, Read, Generic)
-
-instance S.Serialize AddressInfo
-
-$(deriveJSON (dropFieldLabel 11) ''AddressInfo)
-
-instance NFData AddressInfo where
-    rnf AddressInfo{..} =
-        rnf addressInfoAddress `seq`
-        rnf addressInfoValue `seq`
-        rnf addressInfoIsLocal
-
-data BalanceInfo = BalanceInfo
-    { balanceInfoInBalance  :: !Word64
-    , balanceInfoOutBalance :: !Word64
-    , balanceInfoCoins      :: !Int
-    , balanceInfoSpentCoins :: !Int
-    }
-    deriving (Eq, Show, Read)
-
-$(deriveJSON (dropFieldLabel 11) ''BalanceInfo)
-
-instance NFData BalanceInfo where
-    rnf BalanceInfo{..} =
-        rnf balanceInfoInBalance `seq`
-        rnf balanceInfoOutBalance `seq`
-        rnf balanceInfoCoins `seq`
-        rnf balanceInfoSpentCoins
-
 data OfflineTxData = OfflineTxData
     { offlineTxDataTx       :: !Tx
     , offlineTxDataCoinData :: ![CoinSignData]
@@ -362,119 +138,22 @@ instance S.Serialize OfflineTxData where
         S.put $ VarInt $ fromIntegral $ length ds
         forM_ ds S.put
 
-data JsonAccount = JsonAccount
-    { jsonAccountName       :: !Text
-    , jsonAccountType       :: !AccountType
-    , jsonAccountMaster     :: !(Maybe XPrvKey)
-    , jsonAccountMnemonic   :: !(Maybe Text)
-    , jsonAccountKeys       :: ![XPubKey]
-    , jsonAccountGap        :: !Word32
-    , jsonAccountCreated    :: !UTCTime
+data AddressInfo = AddressInfo
+    { addressInfoAddress :: !Address
+    , addressInfoValue   :: !(Maybe Word64)
+    , addressInfoIsLocal :: !Bool
     }
-    deriving (Eq, Show, Read)
+    deriving (Eq, Show, Read, Generic)
 
-$(deriveJSON (dropFieldLabel 11) ''JsonAccount)
+instance S.Serialize AddressInfo
 
-data JsonAddr = JsonAddr
-    { jsonAddrAddress :: !Address
-    , jsonAddrIndex   :: !KeyIndex
-    , jsonAddrType    :: !AddressType
-    , jsonAddrLabel   :: !Text
-    , jsonAddrRedeem  :: !(Maybe ScriptOutput)
-    , jsonAddrKey     :: !(Maybe PubKeyC)
-    , jsonAddrCreated :: !UTCTime
-    -- Optional Balance
-    , jsonAddrBalance :: !(Maybe BalanceInfo)
-    }
-    deriving (Eq, Show, Read)
+$(deriveJSON (dropFieldLabel 11) ''AddressInfo)
 
-$(deriveJSON (dropFieldLabel 8) ''JsonAddr)
-
-data JsonTx = JsonTx
-    { jsonTxHash            :: !TxHash
-    , jsonTxNosigHash       :: !TxHash
-    , jsonTxType            :: !TxType
-    , jsonTxInValue         :: !Word64
-    , jsonTxOutValue        :: !Word64
-    , jsonTxValue           :: !Int64
-    , jsonTxInputs          :: ![AddressInfo]
-    , jsonTxOutputs         :: ![AddressInfo]
-    , jsonTxChange          :: ![AddressInfo]
-    , jsonTxTx              :: !Tx
-    , jsonTxIsCoinbase      :: !Bool
-    , jsonTxConfidence      :: !TxConfidence
-    , jsonTxConfirmedBy     :: !(Maybe BlockHash)
-    , jsonTxConfirmedHeight :: !(Maybe Word32)
-    , jsonTxConfirmedDate   :: !(Maybe Word32)
-    , jsonTxCreated         :: !UTCTime
-    , jsonTxAccount         :: !AccountName
-    -- Optional confirmation
-    , jsonTxConfirmations   :: !(Maybe Word32)
-    , jsonTxBestBlock       :: !(Maybe BlockHash)
-    , jsonTxBestBlockHeight :: !(Maybe BlockHeight)
-    }
-    deriving (Eq, Show, Read)
-
-$(deriveJSON (dropFieldLabel 6) ''JsonTx)
-
-data JsonCoin = JsonCoin
-    { jsonCoinHash       :: !TxHash
-    , jsonCoinPos        :: !Word32
-    , jsonCoinValue      :: !Word64
-    , jsonCoinScript     :: !ScriptOutput
-    , jsonCoinCreated    :: !UTCTime
-    -- Optional Tx
-    , jsonCoinTx         :: !(Maybe JsonTx)
-    -- Optional Address
-    , jsonCoinAddress    :: !(Maybe JsonAddr)
-    -- Optional spender
-    , jsonCoinSpendingTx :: !(Maybe JsonTx)
-    }
-    deriving (Eq, Show, Read)
-
-$(deriveJSON (dropFieldLabel 8) ''JsonCoin)
-
-data JsonBlock = JsonBlock
-    { jsonBlockHash   :: !BlockHash
-    , jsonBlockHeight :: !BlockHeight
-    , jsonBlockPrev   :: !BlockHash
-    , jsonBlockTxs    :: ![JsonTx]
-    } deriving (Eq, Show, Read)
-
-$(deriveJSON (dropFieldLabel 9) ''JsonBlock)
-
-data TxCompleteRes = TxCompleteRes
-    { txCompleteTx       :: !Tx
-    , txCompleteComplete :: !Bool
-    } deriving (Eq, Show, Read)
-
-$(deriveJSON (dropFieldLabel 10) ''TxCompleteRes)
-
-data ListResult a = ListResult
-    { listResultItems :: ![a]
-    , listResultTotal :: !Word32
-    } deriving (Eq, Show, Read)
-
-$(deriveJSON (dropFieldLabel 10) ''ListResult)
-
-data RescanRes = RescanRes { rescanTimestamp :: !Word32 }
-    deriving (Eq, Show, Read)
-
-$(deriveJSON (dropFieldLabel 6) ''RescanRes)
-
-data Notif
-    = NotifBlock !JsonBlock
-    | NotifTx    !JsonTx
-    deriving (Eq, Show, Read)
-
-$(deriveJSON (dropSumLabels 5 5 "type") ''Notif)
-
-data WalletResponse a
-    = ResponseError { responseError :: !Text }
-    | ResponseValid { responseResult :: !(Maybe a)  }
-    deriving (Eq, Show)
-
-$(deriveJSON (dropSumLabels 8 8 "status") ''WalletResponse)
+instance NFData AddressInfo where
+    rnf AddressInfo{..} =
+        rnf addressInfoAddress `seq`
+        rnf addressInfoValue `seq`
+        rnf addressInfoIsLocal
 
 {- Helper Types -}
 
@@ -485,6 +164,12 @@ instance Exception WalletException
 
 data BTCNode = BTCNode { btcNodeHost :: !String, btcNodePort :: !Int }
     deriving (Eq, Read, Show)
+
+requestJson :: Int -> Int -> Options
+requestJson c f = (dropSumLabels c f "method")
+    { tagSingleConstructors = True
+    , allNullaryToStringTag = False
+    }
 
 $(deriveJSON (dropFieldLabel 7) ''BTCNode)
 

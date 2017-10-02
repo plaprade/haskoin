@@ -3,47 +3,38 @@
 module Network.Haskoin.Wallet.Server
 ( runSPVServer
 , runSPVServerWithContext
+, RequestPair
 ) where
 
+import           Control.Applicative
 import           Control.Concurrent.Async.Lifted       (async, link,
                                                         waitAnyCancel)
 import           Control.Concurrent.STM                (atomically, retry)
 import           Control.Concurrent.STM.TBMChan        (TBMChan, newTBMChan,
                                                         readTBMChan)
 import           Control.DeepSeq                       (NFData (..))
-import           Control.Exception.Lifted              (ErrorCall (..),
-                                                        SomeException (..),
-                                                        catches)
-import qualified Control.Exception.Lifted              as E (Handler (..))
-import           Control.Monad                         (forM_, forever, unless,
-                                                        void, when)
+import qualified Control.Exception.Lifted              as E
+import           Control.Monad
 import           Control.Monad.Base                    (MonadBase)
 import           Control.Monad.Catch                   (MonadThrow)
 import           Control.Monad.Fix                     (fix)
-import           Control.Monad.Logger                  (MonadLoggerIO,
-                                                        filterLogger, logDebug,
-                                                        logError, logInfo,
-                                                        logWarn,
-                                                        runStdoutLoggingT)
+import qualified Control.Monad.Logger                  as L
 import           Control.Monad.Trans                   (lift, liftIO)
 import           Control.Monad.Trans.Control           (MonadBaseControl,
                                                         liftBaseOpDiscard)
+import           Control.Monad.Trans.Maybe             (MaybeT (..))
 import           Control.Monad.Trans.Resource          (MonadResource,
                                                         runResourceT)
-import           Data.Aeson                            (Value, decode, encode)
+import           Data.Aeson                            (ToJSON, Value, decode,
+                                                        encode)
 import           Data.ByteString                       (ByteString)
-import qualified Data.ByteString.Lazy                  as BL (fromStrict,
-                                                              toStrict)
+import qualified Data.ByteString.Lazy                  as BL
 import           Data.Conduit                          (await, awaitForever,
                                                         ($$))
-import qualified Data.HashMap.Strict                   as H (lookup)
+import qualified Data.HashMap.Strict                   as H
 import           Data.List.NonEmpty                    (NonEmpty ((:|)))
-import qualified Data.Map.Strict                       as M (Map, assocs, elems,
-                                                             empty,
-                                                             fromListWith, null,
-                                                             unionWith)
-import           Data.Maybe                            (fromJust, fromMaybe,
-                                                        isJust)
+import qualified Data.Map.Strict                       as M
+import           Data.Maybe
 import           Data.Monoid                           ((<>))
 import           Data.String.Conversions               (cs)
 import           Data.Text                             (pack)
@@ -63,21 +54,15 @@ import           Network.Haskoin.Transaction
 import           Network.Haskoin.Wallet.Accounts
 import           Network.Haskoin.Wallet.Database
 import           Network.Haskoin.Wallet.Model
+import qualified Network.Haskoin.Wallet.Request        as Q
+import qualified Network.Haskoin.Wallet.Response       as R
 import           Network.Haskoin.Wallet.Server.Handler
 import           Network.Haskoin.Wallet.Settings
 import           Network.Haskoin.Wallet.Transaction
 import           Network.Haskoin.Wallet.Types
 import           System.Posix.Daemon                   (Redirection (ToFile),
                                                         runDetached)
-import           System.ZMQ4                           (Context, KeyFormat (..),
-                                                        Pub (..), Rep (..),
-                                                        Socket, bind, receive,
-                                                        receiveMulti, restrict,
-                                                        send, sendMulti,
-                                                        setCurveSecretKey,
-                                                        setCurveServer,
-                                                        setLinger, withContext,
-                                                        withSocket, z85Decode)
+import           System.ZMQ4
 
 data EventSession = EventSession
     { eventBatchSize :: !Int
@@ -96,14 +81,14 @@ runSPVServer cfg = maybeDetach cfg $ -- start the server process
   where
     -- Setup logging monads
     run          = runResourceT . runLogging
-    runLogging   = runStdoutLoggingT . filterLogger logFilter
+    runLogging   = L.runStdoutLoggingT . L.filterLogger logFilter
     logFilter _ level = level >= configLogLevel cfg
 
 -- |Run the server, and use the specifed ZeroMQ context.
 --  Useful if you want to communicate with the server using
 --  the "inproc" ZeroMQ transport, where a shared context is
 --  required.
-runSPVServerWithContext :: ( MonadLoggerIO m
+runSPVServerWithContext :: ( L.MonadLoggerIO m
                            , MonadBaseControl IO m
                            , MonadBase IO m
                            , MonadThrow m
@@ -155,7 +140,7 @@ runSPVServerWithContext cfg ctx = do
                 ]
             mapM_ link as
             (_,r) <- waitAnyCancel as
-            $(logDebug) "Exiting main thread"
+            $(L.logDebug) "Exiting main thread"
             return r
   where
     spv pool = do
@@ -169,7 +154,7 @@ runSPVServerWithContext cfg ctx = do
     hosts = map (\x -> PeerHost (btcNodeHost x) (btcNodePort x)) nodes
     -- Run the merkle syncing thread
     runMerkleSync pool notif = do
-        $(logDebug) "Waiting for a valid bloom filter for merkle downloads..."
+        $(L.logDebug) "Waiting for a valid bloom filter for merkle downloads..."
 
         -- Only download merkles if we have a valid bloom filter
         _ <- atomicallyNodeT waitBloomFilter
@@ -182,7 +167,7 @@ runSPVServerWithContext cfg ctx = do
 
         -- Start the merkle sync
         merkleSync pool 500 notif
-        $(logDebug) "Exiting Merkle-sync thread"
+        $(L.logDebug) "Exiting Merkle-sync thread"
     -- Run a thread that will re-broadcast pending transactions
     broadcastPendingTxs pool = forever $ do
         (hash, _) <- runSqlNodeT $ walletBestBlock
@@ -196,21 +181,21 @@ runSPVServerWithContext cfg ctx = do
         atomicallyNodeT $ do
             synced <- areBlocksSynced hash
             when synced $ lift retry
-        $(logDebug) "Exiting tx-broadcast thread"
+        $(L.logDebug) "Exiting tx-broadcast thread"
     processTx pool notif = do
         awaitForever $ \tx -> lift $ do
             (_, newAddrs) <- runDBPool (importNetTx tx (Just notif)) pool
             unless (null newAddrs) $ do
-                $(logInfo) $ pack $ unwords
+                $(L.logInfo) $ pack $ unwords
                     [ "Generated", show $ length newAddrs
                     , "new addresses while importing the tx."
                     , "Updating the bloom filter"
                     ]
                 (bloom, elems, _) <- runDBPool getBloomFilter pool
                 atomicallyNodeT $ sendBloomFilter bloom elems
-        $(logDebug) "Exiting tx-import thread"
+        $(L.logDebug) "Exiting tx-import thread"
 
-initDatabase :: (MonadBaseControl IO m, MonadLoggerIO m)
+initDatabase :: (MonadBaseControl IO m, L.MonadLoggerIO m)
              => Config -> m ConnectionPool
 initDatabase cfg = do
     -- Create a database pool
@@ -226,26 +211,31 @@ initDatabase cfg = do
     return pool
 
 merkleSync
-    :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m, MonadResource m)
+    :: ( L.MonadLoggerIO m
+       , MonadBaseControl IO m
+       , MonadThrow m
+       , MonadResource m
+       )
     => ConnectionPool
     -> Word32
-    -> TBMChan Notif
+    -> TBMChan R.Notif
     -> NodeT m ()
 merkleSync pool bSize notif = do
     -- Get our best block
     (hash, _) <- runDBPool walletBestBlock pool
-    $(logDebug) "Starting merkle batch download"
+    $(L.logDebug) "Starting merkle batch download"
     -- Wait for a new block or a rescan
     (action, source) <- merkleDownload hash bSize
-    $(logDebug) "Received a merkle action and source. Processing the source..."
+    $(L.logDebug)
+        "Received a merkle action and source. Processing the source..."
 
     -- Read and process the data from the source
     (lastMerkleM, mTxsAcc, aMap) <- source $$ go Nothing [] M.empty
-    $(logDebug) "Merkle source processed and closed"
+    $(L.logDebug) "Merkle source processed and closed"
 
     -- Send a new bloom filter to our peers if new addresses were generated
     unless (M.null aMap) $ do
-        $(logInfo) $ pack $ unwords
+        $(L.logInfo) $ pack $ unwords
             [ "Generated", show $ sum $ M.elems aMap
             , "new addresses while importing the merkle block."
             , "Sending our bloom filter."
@@ -254,41 +244,41 @@ merkleSync pool bSize notif = do
         atomicallyNodeT $ sendBloomFilter bloom elems
 
     -- Check if we should rescan the current merkle batch
-    $(logDebug) "Checking if we need to rescan the current batch..."
+    $(L.logDebug) "Checking if we need to rescan the current batch..."
     rescan <- shouldRescan aMap
-    when rescan $ $(logDebug) "We need to rescan the current batch"
+    when rescan $ $(L.logDebug) "We need to rescan the current batch"
     -- Compute the new batch size
     let newBSize | rescan    = max 1 $ bSize `div` 2
                  | otherwise = min 500 $ bSize + max 1 (bSize `div` 20)
 
-    when (newBSize /= bSize) $ $(logDebug) $ pack $ unwords
+    when (newBSize /= bSize) $ $(L.logDebug) $ pack $ unwords
         [ "Changing block batch size from", show bSize, "to", show newBSize ]
 
     -- Did we receive all the merkles that we asked for ?
     let missing = (headerHash <$> lastMerkleM) /=
             Just (nodeHash $ last $ actionNodes action)
 
-    when missing $ $(logWarn) $ pack $ unwords
+    when missing $ $(L.logWarn) $ pack $ unwords
         [ "Merkle block stream closed prematurely"
         , show lastMerkleM
         ]
 
     -- TODO: We could still salvage a partially received batch
     unless (rescan || missing) $ do
-        $(logDebug) "Importing merkles into the wallet..."
+        $(L.logDebug) "Importing merkles into the wallet..."
         -- Confirm the transactions
         runDBPool (importMerkles action mTxsAcc (Just notif)) pool
-        $(logDebug) "Done importing merkles into the wallet"
+        $(L.logDebug) "Done importing merkles into the wallet"
         logBlockChainAction action
 
     merkleSync pool newBSize notif
   where
     go lastMerkleM mTxsAcc aMap = await >>= \resM -> case resM of
         Just (Right tx) -> do
-            $(logDebug) $ pack $ unwords
+            $(L.logDebug) $ pack $ unwords
                 [ "Importing merkle tx", cs $ txHashToHex $ txHash tx ]
             (_, newAddrs) <- lift $ runDBPool (importNetTx tx Nothing) pool
-            $(logDebug) $ pack $ unwords
+            $(L.logDebug) $ pack $ unwords
                 [ "Generated", show $ length newAddrs
                 , "new addresses while importing tx"
                 , cs $ txHashToHex $ txHash tx
@@ -296,7 +286,7 @@ merkleSync pool bSize notif = do
             let newMap = M.unionWith (+) aMap $ groupByAcc newAddrs
             go lastMerkleM mTxsAcc newMap
         Just (Left (MerkleBlock mHead _ _ _, mTxs)) -> do
-            $(logDebug) $ pack $ unwords
+            $(L.logDebug) $ pack $ unwords
                 [ "Buffering merkle block"
                 , cs $ blockHashToHex $ headerHash mHead
                 ]
@@ -320,13 +310,13 @@ merkleSync pool bSize notif = do
         return $ not $ null res
     -- Some logging of the blocks
     logBlockChainAction action = case action of
-        BestChain nodes -> $(logInfo) $ pack $ unwords
+        BestChain nodes -> $(L.logInfo) $ pack $ unwords
             [ "Best chain height"
             , show $ nodeBlockHeight $ last nodes
             , "(", cs $ blockHashToHex $ nodeHash $ last nodes
             , ")"
             ]
-        ChainReorg _ o n -> $(logInfo) $ pack $ unlines $
+        ChainReorg _ o n -> $(L.logInfo) $ pack $ unlines $
             [ "Chain reorg."
             , "Orphaned blocks:"
             ]
@@ -337,10 +327,10 @@ merkleSync pool bSize notif = do
                         , show $ nodeBlockHeight $ last n
                         ]
             ]
-        SideChain n -> $(logWarn) $ pack $ unlines $
+        SideChain n -> $(L.logWarn) $ pack $ unlines $
             "Side chain:" :
             map (("  " ++) . cs . blockHashToHex . nodeHash) n
-        KnownChain n -> $(logWarn) $ pack $ unlines $
+        KnownChain n -> $(L.logWarn) $ pack $ unlines $
             "Known chain:" :
             map (("  " ++) . cs . blockHashToHex . nodeHash) n
 
@@ -355,12 +345,12 @@ maybeDetach cfg action =
 -- Run the main ZeroMQ loop
 -- TODO: Support concurrent requests using DEALER socket when we can do
 -- concurrent MySQL requests.
-runWalletNotif :: ( MonadLoggerIO m
-                , MonadBaseControl IO m
-                , MonadBase IO m
-                , MonadThrow m
-                , MonadResource m
-                )
+runWalletNotif :: ( L.MonadLoggerIO m
+                  , MonadBaseControl IO m
+                  , MonadBase IO m
+                  , MonadThrow m
+                  , MonadResource m
+                  )
                => Context -> HandlerSession -> m ()
 runWalletNotif ctx session =
     liftBaseOpDiscard (withSocket ctx Pub) $ \sock -> do
@@ -371,13 +361,13 @@ runWalletNotif ctx session =
             xM <- liftIO $ atomically $ readTBMChan $ handlerNotifChan session
             forM_ xM $ \x ->
                 let (typ, pay) = case x of
-                        NotifBlock _ ->
+                        R.NotifBlock _ ->
                             ("[block]", cs $ encode x)
-                        NotifTx JsonTx{..} ->
-                            ("{" <> cs jsonTxAccount <> "}", cs $ encode x)
+                        R.NotifTx R.Tx{..} ->
+                            ("{" <> cs txAccount <> "}", cs $ encode x)
                 in liftIO $ sendMulti sock $ typ :| [pay]
 
-runWalletCmd :: ( MonadLoggerIO m
+runWalletCmd :: ( L.MonadLoggerIO m
                 , MonadBaseControl IO m
                 , MonadBase IO m
                 , MonadThrow m
@@ -391,28 +381,28 @@ runWalletCmd ctx session = do
         liftIO $ bind sock $ configBind $ handlerConfig session
         fix $ \loop -> do
             bs  <- liftIO $ receive sock
-            let msg = decode $ BL.fromStrict bs
-            res <- case msg of
-                Just r  -> catchErrors $
-                    runHandler (dispatchRequest r) session
-                Nothing -> return $ ResponseError "Could not decode request"
-            liftIO $ send sock [] $ BL.toStrict $ encode res
-            unless (msg == Just StopServerReq) loop
-    $(logInfo) "Exiting ZMQ command thread..."
+            res <- catchErrors $ runHandler (dispatchRequest bs) session
+            liftIO $ send sock [] res
+            let stopM = decode $ BL.fromStrict bs
+            unless (isJust (stopM :: Maybe Q.StopServer)) loop
+    $(L.logInfo) "Exiting ZMQ command thread..."
   where
-    catchErrors m = catches m
+    catchErrors m = E.catches m
         [ E.Handler $ \(WalletException err) -> do
-            $(logError) $ pack err
-            return $ ResponseError $ pack err
-        , E.Handler $ \(ErrorCall err) -> do
-            $(logError) $ pack err
-            return $ ResponseError $ pack err
-        , E.Handler $ \(SomeException exc) -> do
-            $(logError) $ pack $ show exc
-            return $ ResponseError $ pack $ show exc
+            $(L.logError) $ pack err
+            return $ BL.toStrict $ encode
+                (R.ResponseError $ pack err :: R.WalletResponse ())
+        , E.Handler $ \(E.ErrorCall err) -> do
+            $(L.logError) $ pack err
+            return $ BL.toStrict $ encode
+                (R.ResponseError $ pack err :: R.WalletResponse ())
+        , E.Handler $ \(E.SomeException exc) -> do
+            $(L.logError) $ pack $ show exc
+            return $ BL.toStrict $ encode
+                (R.ResponseError $ cs $ show exc :: R.WalletResponse ())
         ]
 
-setupCrypto :: (MonadLoggerIO m, MonadBaseControl IO m)
+setupCrypto :: (L.MonadLoggerIO m, MonadBaseControl IO m)
             => Context -> Socket a -> HandlerSession -> m ()
 setupCrypto ctx' sock session = do
     when (isJust serverKeyM) $ liftIO $ do
@@ -427,13 +417,13 @@ setupCrypto ctx' sock session = do
     serverKeyM = configServerKey cfg
     clientKeyPubM = configClientKeyPub cfg
 
-runZapAuth :: ( MonadLoggerIO m
+runZapAuth :: ( L.MonadLoggerIO m
               , MonadBaseControl IO m
               , MonadBase IO m
               )
            => Context -> ByteString -> m ()
 runZapAuth ctx k = do
-    $(logDebug) $ "Starting ØMQ authentication thread"
+    $(L.logDebug) $ "Starting ØMQ authentication thread"
     liftBaseOpDiscard (withSocket ctx Rep) $ \zap -> do
         liftIO $ setLinger (restrict (0 :: Int)) zap
         liftIO $ bind zap "inproc://zeromq.zap.01"
@@ -452,52 +442,65 @@ runZapAuth ctx k = do
                       _ -> Left ("", "500", "Malformed request")
             case actionE of
               Right q -> do
-                  $(logInfo) "Authenticated client successfully"
+                  $(L.logInfo) "Authenticated client successfully"
                   liftIO $ sendMulti zap $
                       "1.0" :| [q, "200", "OK", "client", ""]
               Left (q, c, m) -> do
-                  $(logError) $ pack $ unwords
+                  $(L.logError) $ pack $ unwords
                       [ "Failed to authenticate client:" , cs c, cs m ]
                   liftIO $ sendMulti zap $
                       "1.0" :| [q, c, m, "", ""]
 
+{- Typeful dispatch -}
 
-dispatchRequest :: ( MonadLoggerIO m
+dispatchRequest :: ( L.MonadLoggerIO m
                    , MonadBaseControl IO m
                    , MonadBase IO m
                    , MonadThrow m
                    , MonadResource m
                    )
-                => WalletRequest -> Handler m (WalletResponse Value)
-dispatchRequest req = fmap ResponseValid $ case req of
-    AccountReq n              -> accountReq n
-    AccountsReq p             -> accountsReq p
-    NewAccountReq na          -> newAccountReq na
-    RenameAccountReq n n'     -> renameAccountReq n n'
-    AddPubKeysReq n ks        -> addPubKeysReq n ks
-    SetAccountGapReq n g      -> setAccountGapReq n g
-    AddrsReq n t m o p        -> addrsReq n t m o p
-    UnusedAddrsReq n t p      -> unusedAddrsReq n t p
-    AddressReq n i t m o      -> addressReq n i t m o
-    PubKeyIndexReq n k t      -> pubKeyIndexReq n k t
-    SetAddrLabelReq n i t l   -> setAddrLabelReq n i t l
-    GenerateAddrsReq n i t    -> generateAddrsReq n i t
-    TxsReq n p                -> txsReq n p
-    PendingTxsReq a p         -> pendingTxsReq a p
-    DeadTxsReq a p            -> deadTxsReq a p
-    AddrTxsReq n i t p        -> addrTxsReq n i t p
-    CreateTxReq n c           -> createTxReq n c
-    ImportTxReq n t           -> importTxReq n t
-    SignTxReq n t s           -> signTxReq n t s
-    TxReq n h                 -> txReq n h
-    DeleteTxReq t             -> deleteTxReq t
-    OfflineTxReq n h          -> offlineTxReq n h
-    SignOfflineTxReq n k t c  -> signOfflineTxReq n k t c
-    BalanceReq n mc o         -> balanceReq n mc o
-    SyncBlockReq a n b        -> syncReq a (Right n) b
-    SyncHeightReq a n b       -> syncReq a (Left n) b
-    BlockInfoReq l            -> blockInfoReq l
-    NodeRescanReq na          -> nodeRescanReq na
-    NodeStatusReq             -> nodeStatusReq
-    StopServerReq             -> stopServerReq
+                => ByteString -> Handler m ByteString
+dispatchRequest bss = fmap (fromMaybe noParse) $ runMaybeT $
+        tryDecode (decode bs :: Maybe Q.GetAccount)
+    <|> tryDecode (decode bs :: Maybe Q.Accounts)
+    <|> tryDecode (decode bs :: Maybe Q.NewAccount)
+    <|> tryDecode (decode bs :: Maybe Q.RenameAccount)
+    <|> tryDecode (decode bs :: Maybe Q.AddPubKeys)
+    <|> tryDecode (decode bs :: Maybe Q.SetAccountGap)
+    <|> tryDecode (decode bs :: Maybe Q.Addresses)
+    <|> tryDecode (decode bs :: Maybe Q.UnusedAddresses)
+    <|> tryDecode (decode bs :: Maybe Q.GetAddress)
+    <|> tryDecode (decode bs :: Maybe Q.PubKeyIndex)
+    <|> tryDecode (decode bs :: Maybe Q.SetAddressLabel)
+    <|> tryDecode (decode bs :: Maybe Q.GenerateAddresses)
+    <|> tryDecode (decode bs :: Maybe Q.Txs)
+    <|> tryDecode (decode bs :: Maybe Q.PendingTxs)
+    <|> tryDecode (decode bs :: Maybe Q.DeadTxs)
+    <|> tryDecode (decode bs :: Maybe Q.AddressTxs)
+    <|> tryDecode (decode bs :: Maybe Q.CreateTx)
+    <|> tryDecode (decode bs :: Maybe Q.ImportTx)
+    <|> tryDecode (decode bs :: Maybe Q.SignTx)
+    <|> tryDecode (decode bs :: Maybe Q.GetTx)
+    <|> tryDecode (decode bs :: Maybe Q.DeleteTx)
+    <|> tryDecode (decode bs :: Maybe Q.OfflineTx)
+    <|> tryDecode (decode bs :: Maybe Q.SignOfflineTx)
+    <|> tryDecode (decode bs :: Maybe Q.Balance)
+    <|> tryDecode (decode bs :: Maybe Q.SyncBlock)
+    <|> tryDecode (decode bs :: Maybe Q.SyncHeight)
+    <|> tryDecode (decode bs :: Maybe Q.BlockInfo)
+    <|> tryDecode (decode bs :: Maybe Q.NodeRescan)
+    <|> tryDecode (decode bs :: Maybe Q.NodeStatus)
+    <|> tryDecode (decode bs :: Maybe Q.StopServer)
+  where
+    tryDecode :: ( RequestPair a b
+                 , L.MonadLoggerIO m
+                 , MonadThrow m
+                 , MonadBaseControl IO m
+                 , MonadResource m
+                 ) => Maybe a -> MaybeT (Handler m) ByteString
+    tryDecode (Just a) = MaybeT $ (Just . BL.toStrict . encode) <$> (dispatch a)
+    tryDecode Nothing  = MaybeT $ return Nothing
+    noParse = BL.toStrict $ encode
+        (R.ResponseError "Could not decode input JSON" :: R.WalletResponse ())
+    bs = BL.fromStrict bss
 

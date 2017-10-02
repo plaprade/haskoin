@@ -4,18 +4,21 @@ import           Control.Exception                  (throw)
 import           Control.Monad.Catch                (MonadThrow, throwM)
 import           Control.Monad.Trans                (MonadIO)
 import           Data.Maybe                         (fromMaybe)
+import           Data.Time.Clock.POSIX              (posixSecondsToUTCTime)
 import           Database.Persist.Sql               (SqlPersistT)
 import           Network.Haskoin.Block
 import           Network.Haskoin.Node.HeaderTree
 import           Network.Haskoin.Wallet.Model
+import qualified Network.Haskoin.Wallet.Request     as Q
+import qualified Network.Haskoin.Wallet.Response    as R
 import           Network.Haskoin.Wallet.Transaction
 import           Network.Haskoin.Wallet.Types
 
 mainChain :: (MonadIO m, MonadThrow m)
           => Either BlockHeight BlockHash
-          -> ListRequest
-          -> SqlPersistT m (ListResult NodeBlock)
-mainChain blockE ListRequest{..} = do
+          -> Q.List
+          -> SqlPersistT m (R.List NodeBlock)
+mainChain blockE Q.List{..} = do
     bestHash <- fst <$> walletBestBlock
     bestM <- getBlockByHash bestHash
     best <- maybe (throwM $ WalletException "Could not find wallet best block")
@@ -31,7 +34,7 @@ mainChain blockE ListRequest{..} = do
                 return heightNodeM
     frst <- (+1) . nodeBlockHeight <$> splitBlock best remoteNode
     if nodeBlockHeight best < frst
-        then return $ ListResult [] 0
+        then return $ R.List [] 0
         else do
             let cnt = nodeBlockHeight best - frst
                 limit = min listLimit (cnt - listOffset)
@@ -40,7 +43,7 @@ mainChain blockE ListRequest{..} = do
                     then cnt - listOffset - limit
                     else listOffset
             nodes <- getBlocksFromHeight best limit (frst + offset)
-            return $ ListResult nodes cnt
+            return $ R.List nodes cnt
 
 blockTxs :: [NodeBlock] -> [WalletTx] -> [(NodeBlock, [WalletTx])]
 blockTxs blocks transactions = reverse $ go [] blocks transactions
@@ -57,3 +60,22 @@ blockTxs blocks transactions = reverse $ go [] blocks transactions
     blockHashOf t = fromMaybe
         (throw $ WalletException "Unexpected unconfirmed transaction")
         (walletTxConfirmedBy t)
+
+fromNodeBlock :: NodeBlock -> R.BlockInfo
+fromNodeBlock nb =
+    R.BlockInfo
+       { blockInfoHash       = headerHash header
+       , blockInfoVersion    = blockVersion header
+       , blockInfoPrevBlock  = prevBlock header
+       , blockInfoNonce      = bhNonce header
+       , blockInfoBits       = blockBits header
+       , blockInfoMerkleRoot = merkleRoot header
+       , blockInfoTimestamp  = utcTimestamp
+       , blockInfoChainWork  = nodeWork   nb
+       , blockInfoHeight     = nodeHeight nb
+       , blockInfoChain      = nodeChain  nb
+       }
+  where
+    header = nodeHeader nb
+    utcTimestamp = posixSecondsToUTCTime . realToFrac .  blockTimestamp $ header
+

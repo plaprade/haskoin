@@ -1,26 +1,22 @@
 module Main where
 
-import qualified Control.Concurrent               as Con
-import qualified Control.Exception                as Except
-import qualified Control.Monad                    as M
-import qualified Control.Monad.Logger             as Log
-import qualified Control.Monad.Trans.Resource     as Resource
-import qualified Data.Aeson                       as JSON
-import qualified Data.Aeson.Encode.Pretty         as PrettyJSON
-import qualified Data.HashMap.Strict              as HM
-import           Data.String.Conversions          (cs)
-import qualified Database.Persist.Sqlite          as DB
-import qualified Network.Haskoin.Node.STM         as Node
-import           Network.Haskoin.Wallet           (AddressType (..),
-                                                   Config (..),
-                                                   OutputFormat (..),
-                                                   SPVMode (..),
-                                                   WalletRequest (..),
-                                                   WalletResponse (..))
-import           Network.Haskoin.Wallet.Internals (BTCNode (..), Notif (..))
-import           Network.Haskoin.Wallet.Server    (runSPVServerWithContext)
-import qualified System.ZMQ4                      as ZMQ
-
+import qualified Control.Concurrent              as Con
+import qualified Control.Exception               as Except
+import qualified Control.Monad                   as M
+import qualified Control.Monad.Logger            as Log
+import qualified Control.Monad.Trans.Resource    as Resource
+import qualified Data.Aeson                      as JSON
+import qualified Data.Aeson.Encode.Pretty        as PrettyJSON
+import qualified Data.HashMap.Strict             as HM
+import           Data.String.Conversions         (cs)
+import qualified Database.Persist.Sqlite         as DB
+import qualified Network.Haskoin.Node.STM        as Node
+import qualified Network.Haskoin.Wallet.Request  as Q
+import qualified Network.Haskoin.Wallet.Response as R
+import           Network.Haskoin.Wallet.Server
+import           Network.Haskoin.Wallet.Settings
+import           Network.Haskoin.Wallet.Types
+import qualified System.ZMQ4                     as ZMQ
 
 databaseConf :: DB.SqliteConf
 databaseConf = DB.SqliteConf "/tmp/tmpdb" 1
@@ -62,36 +58,35 @@ runWallet cfg ctx = run $ runSPVServerWithContext cfg ctx
 
 cmdGetStatus :: ZMQ.Context -> IO Node.NodeStatus
 cmdGetStatus ctx =
-    sendCmdOrFail NodeStatusReq ctx >>=
+    sendCmdOrFail Q.NodeStatus ctx >>=
     \res -> case res of
         Nothing     -> error "ERROR: Status command: no response."
         Just status -> return status
 
-sendCmdOrFail :: (JSON.FromJSON a, JSON.ToJSON a)
-              => WalletRequest
-              -> ZMQ.Context
-              -> IO (Maybe a)
+sendCmdOrFail :: (RequestPair a b, JSON.ToJSON a, JSON.FromJSON b)
+              => a -> ZMQ.Context -> IO (Maybe b)
 sendCmdOrFail cmd ctx =
-    sendCmd cmd ctx >>=
-    either error return >>=
-    \res -> case res of
-        ResponseError e -> error $ "ERROR: Send cmd, ResponseError: " ++ cs e
-        ResponseValid r -> return r
+    sendCmd cmd ctx >>= \res -> case res of
+        R.ResponseData r  -> return $ Just r
+        R.ResponseOK      -> return Nothing
+        R.ResponseError e -> error $ "ERROR: Send cmd, ResponseError: " ++ cs e
 
-sendCmd :: (JSON.FromJSON a, JSON.ToJSON a)
-        => WalletRequest
-        -> ZMQ.Context
-        -> IO (Either String (WalletResponse a))
+sendCmd :: (RequestPair a b, JSON.ToJSON a, JSON.FromJSON b)
+        => a -> ZMQ.Context -> IO (R.WalletResponse b)
 sendCmd req ctx =
     ZMQ.withSocket ctx ZMQ.Req $ \sock -> do
         ZMQ.setLinger (ZMQ.restrict (0 :: Int)) sock
         ZMQ.connect sock cmdSocket
         ZMQ.send sock [] (cs $ JSON.encode req)
-        JSON.eitherDecode . cs <$> ZMQ.receive sock
+        joinWalletResponse . JSON.eitherDecode . cs <$> ZMQ.receive sock
+
+joinWalletResponse :: Either String (R.WalletResponse b) -> R.WalletResponse b
+joinWalletResponse (Right r) = r
+joinWalletResponse (Left err) = R.ResponseError $ cs err
 
 -- |Connect to notify socket, subscribe to new blocks,
 --  and execute the supplied handler for each new block as it arrives.
-notifyThread :: ZMQ.Context -> (Notif -> IO ()) -> IO ()
+notifyThread :: ZMQ.Context -> (R.Notif -> IO ()) -> IO ()
 notifyThread ctx handler = waitAndCatch $
     ZMQ.withSocket ctx ZMQ.Sub $ \sock -> do
         ZMQ.setLinger (ZMQ.restrict (0 :: Int)) sock
@@ -104,7 +99,8 @@ notifyThread ctx handler = waitAndCatch $
             handler notif
   where
     failOnErr = fail . ("NOTIFY: ERROR: recv failed: " ++)
-    waitAndCatch ioa = Con.threadDelay 10000 >> ioa `Except.finally` waitAndCatch ioa
+    waitAndCatch ioa = Con.threadDelay 10000 >>
+                           ioa `Except.finally` waitAndCatch ioa
 
 btcNodes :: [BTCNode]
 btcNodes =

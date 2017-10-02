@@ -34,6 +34,7 @@ module Network.Haskoin.Wallet.Accounts
 , getBloomFilter
 
 -- * Helpers
+, fromAccount
 , defaultDeriv
 , rootToAccKey
 , rootToAccKeys
@@ -83,6 +84,8 @@ import           Network.Haskoin.Script
 import           Network.Haskoin.Wallet.Model
 import           Network.Haskoin.Wallet.Settings
 import           Network.Haskoin.Wallet.Types
+import qualified Network.Haskoin.Wallet.Request as Q
+import qualified Network.Haskoin.Wallet.Response as R
 
 {- Initialization -}
 
@@ -125,8 +128,8 @@ rootToAccKeys xKey pubs =
 
 -- | Fetch all accounts
 accounts :: (MonadIO m, MonadThrow m, MonadBase IO m, MonadResource m)
-         => ListRequest -> SqlPersistT m ([Account], Word32)
-accounts ListRequest{..} = do
+         => Q.List -> SqlPersistT m ([Account], Word32)
+accounts Q.List{..} = do
     cntRes <- select $ from $ \acc ->
         return $ countDistinct $ acc ^. AccountId
 
@@ -165,9 +168,9 @@ mnemonicToPrvKey pass ms = case mnemonicToSeed pass ms of
 -- |Create a new account using the given mnemonic or keys. If no mnemonic,
 -- master key or public keys are provided, a new mnemonic will be generated.
 newAccount :: (MonadIO m, MonadThrow m, MonadBase IO m, MonadResource m)
-           => NewAccount
+           => Q.NewAccount
            -> SqlPersistT m (Entity Account, Maybe Mnemonic)
-newAccount NewAccount{..} = do
+newAccount Q.NewAccount{..} = do
     unless (validAccountType newAccountType) $
         throwM $ WalletException "Invalid account type"
 
@@ -335,10 +338,10 @@ addresses accE@(Entity ai _) addrType = fmap (map entityVal) $
 addressList :: MonadIO m
             => Entity Account -- ^ Account Entity
             -> AddressType    -- ^ Address type
-            -> ListRequest    -- ^ List request
+            -> Q.List         -- ^ List request
             -> SqlPersistT m ([WalletAddr], Word32)
             -- ^ List result
-addressList accE@(Entity ai _) addrType ListRequest{..} = do
+addressList accE@(Entity ai _) addrType Q.List{..} = do
     cnt <- addressCount accE addrType
 
     when (listOffset > 0 && listOffset >= cnt) $ throw $ WalletException
@@ -375,9 +378,9 @@ addressCount (Entity ai acc) addrType = do
 unusedAddresses :: MonadIO m
                 => Entity Account                       -- ^ Account ID
                 -> AddressType                          -- ^ Address type
-                -> ListRequest
+                -> Q.List
                 -> SqlPersistT m ([WalletAddr], Word32) -- ^ Unused addresses
-unusedAddresses (Entity ai acc) addrType ListRequest{..} = do
+unusedAddresses (Entity ai acc) addrType Q.List{..} = do
     cntRes <- select $ from $ \x -> do
         where_ (   x ^. WalletAddrAccount ==. val ai
                &&. x ^. WalletAddrType    ==. val addrType
@@ -704,6 +707,17 @@ getPathPubKey acc@Account{..} deriv
             ]
 
 {- Helpers -}
+
+fromAccount :: Maybe Mnemonic -> Account -> R.Account
+fromAccount msM acc = R.Account
+    { accountName     = accountName acc
+    , accountType     = accountType acc
+    , accountMnemonic = fmap cs msM
+    , accountMaster   = accountMaster acc
+    , accountKeys     = accountKeys acc
+    , accountGap      = accountGap acc
+    , accountCreated  = accountCreated acc
+    }
 
 subSelectAddrCount :: Entity Account
                    -> AddressType

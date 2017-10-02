@@ -2,17 +2,19 @@ module Network.Haskoin.Wallet.Spec where
 
 import           Control.Concurrent.Async
 import qualified Control.Monad.Logger            as L
-import qualified Control.Monad.Trans.Resource    as R
+import           Control.Monad.Trans.Resource    (runResourceT)
 import qualified Data.Aeson                      as J
-import qualified Data.Text                       as T
 import           Data.Default                    (def)
 import qualified Data.HashMap.Strict             as HM
 import           Data.String.Conversions         (cs)
+import qualified Data.Text                       as T
 import qualified Database.Persist.Sqlite         as DB
 import           Network.Haskoin.Crypto
-import           Network.Haskoin.Wallet
+import qualified Network.Haskoin.Wallet.Request  as Q
+import qualified Network.Haskoin.Wallet.Response as R
 import           Network.Haskoin.Wallet.Server
 import           Network.Haskoin.Wallet.Settings
+import           Network.Haskoin.Wallet.Types
 import qualified System.ZMQ4                     as ZMQ
 import           Test.Hspec
 import           Test.QuickCheck
@@ -20,10 +22,10 @@ import           Test.QuickCheck
 apiSpec :: Spec
 apiSpec = describe "Wallet API" $ do
     it "replies with the right message types" $ withTestServer $ \ctx -> do
-        apiValid ctx (NewAccountReq newMs1)
-            `shouldNotReturn` (Nothing :: Maybe JsonAccount)
-        apiValid ctx (AddPubKeysReq "Multisig A" [snd keys2])
-            `shouldNotReturn` (Nothing :: Maybe JsonAccount)
+        api ctx newMs1
+            `shouldNotReturn` R.ResponseOK
+        api ctx (Q.AddPubKeys "Multisig A" [snd keys2])
+            `shouldNotReturn` R.ResponseOK
         return ()
 
 {- Testing defenitions -}
@@ -47,8 +49,8 @@ keys2 = ( "xprv9yopS25nKJeGStDY9Ve85Gub4ziF3o4M5cHdiceCtJtoNE8V7Q8umVw56eKkwipLM
         , "xpub6CoAqXcg9gCZfNJ1FXB8SQrKd2YjTFnCSqDEX13pSeRnF2TdewTAKJFYwwx3DeWHNVJTYrBQgZHRZwHRF3omZKB3ZhyQNJvr2VYViiV7gC3"
         )
 
-newAcc :: NewAccount
-newAcc = NewAccount
+newAcc :: Q.NewAccount
+newAcc = Q.NewAccount
     { newAccountName     = "Hello World"
     , newAccountType     = AccountRegular
     , newAccountMnemonic = Just mnem1
@@ -60,8 +62,8 @@ newAcc = NewAccount
     , newAccountReadOnly = False
     }
 
-newMs1 :: NewAccount
-newMs1 = NewAccount
+newMs1 :: Q.NewAccount
+newMs1 = Q.NewAccount
     { newAccountName     = "Multisig A"
     , newAccountType     = AccountMultisig 2 2
     , newAccountMnemonic = Just mnem1
@@ -73,8 +75,8 @@ newMs1 = NewAccount
     , newAccountReadOnly = False
     }
 
-newMs2 :: NewAccount
-newMs2 = NewAccount
+newMs2 :: Q.NewAccount
+newMs2 = Q.NewAccount
     { newAccountName     = "Multisig B"
     , newAccountType     = AccountMultisig 2 2
     , newAccountMnemonic = Just mnem2
@@ -86,8 +88,8 @@ newMs2 = NewAccount
     , newAccountReadOnly = False
     }
 
-defListRequest :: ListRequest
-defListRequest = ListRequest
+defListRequest :: Q.List
+defListRequest = Q.List
     { listOffset  = 0
     , listLimit   = 10
     , listReverse = False
@@ -95,27 +97,17 @@ defListRequest = ListRequest
 
 {- Testing Utilities -}
 
-apiValid :: J.FromJSON a
-         => ZMQ.Context -> WalletRequest -> IO (Maybe a)
-apiValid ctx req = do
-    resE <- api ctx req
-    case resE of
-        Right (ResponseValid resM)-> return resM
-        Right (ResponseError err) -> do
-            expectationFailure $ cs err
-            return Nothing
-        Left err -> do
-            expectationFailure $ cs err
-            return Nothing
-
-api :: J.FromJSON a => ZMQ.Context -> WalletRequest
-    -> IO (Either String (WalletResponse a))
+api :: RequestPair a b => ZMQ.Context -> a -> IO (R.WalletResponse b)
 api ctx req = do
     ZMQ.withSocket ctx ZMQ.Req $ \sock -> do
         ZMQ.setLinger (ZMQ.restrict (0 :: Int)) sock
         ZMQ.connect sock socket
         ZMQ.send sock [] (cs $ J.encode req)
-        J.eitherDecode . cs <$> ZMQ.receive sock
+        joinWalletResponse . J.eitherDecode . cs <$> ZMQ.receive sock
+
+joinWalletResponse :: Either String (R.WalletResponse b) -> R.WalletResponse b
+joinWalletResponse (Right r) = r
+joinWalletResponse (Left err) = R.ResponseError $ cs err
 
 withTestServer :: (ZMQ.Context -> IO ()) -> IO ()
 withTestServer test =
@@ -129,7 +121,7 @@ memoryServer :: ZMQ.Context -> IO ()
 memoryServer ctx =
     run $ runSPVServerWithContext testConfig ctx
   where
-    run           = R.runResourceT . runLogging
+    run           = runResourceT . runLogging
     runLogging    = L.runStderrLoggingT . L.filterLogger logFilter
     logFilter _ l = l >= configLogLevel testConfig
 

@@ -3,33 +3,40 @@ module Network.Haskoin.Wallet.Units (tests) where
 
 import           Control.Concurrent.STM
 import           Control.Concurrent.STM.TBMChan
-import           Control.Exception                (Exception, handleJust)
-import           Control.Monad                    (guard)
-import           Control.Monad.Logger             (NoLoggingT)
-import           Control.Monad.Trans              (liftIO)
-import           Control.Monad.Trans.Resource     (ResourceT)
-import qualified Data.ByteString                  as BS
-import           Data.List                        (sort)
-import           Data.Maybe                       (fromJust, isJust)
-import           Data.String.Conversions          (cs)
-import           Data.Word                        (Word32, Word64)
-import           Database.Persist                 (Entity (..), entityVal,
-                                                   getBy)
-import           Database.Persist.Sqlite          (SqlPersistT,
-                                                   runMigrationSilent,
-                                                   runSqlite)
+import           Control.Exception                      (Exception, handleJust)
+import           Control.Monad                          (guard)
+import           Control.Monad.Logger                   (NoLoggingT)
+import           Control.Monad.Trans                    (liftIO)
+import           Control.Monad.Trans.Resource           (ResourceT)
+import qualified Data.ByteString                        as BS
+import           Data.List                              (sort)
+import           Data.Maybe                             (fromJust, isJust)
+import           Data.String.Conversions                (cs)
+import           Data.Word                              (Word32, Word64)
+import           Database.Persist                       (Entity (..), entityVal,
+                                                         getBy)
+import           Database.Persist.Sqlite                (SqlPersistT,
+                                                         runMigrationSilent,
+                                                         runSqlite)
 import           Network.Haskoin.Block
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Node.HeaderTree
 import           Network.Haskoin.Script
 import           Network.Haskoin.Transaction
-import           Network.Haskoin.Wallet.Internals
-import           Test.Framework                   (Test, testGroup)
-import           Test.Framework.Providers.HUnit   (testCase)
-import           Test.HUnit                       (Assertion, assertBool,
-                                                   assertEqual, assertFailure)
-
 import           Network.Haskoin.Util
+import           Network.Haskoin.Wallet.Accounts
+import           Network.Haskoin.Wallet.Client
+import           Network.Haskoin.Wallet.Client.Commands
+import           Network.Haskoin.Wallet.Model
+import qualified Network.Haskoin.Wallet.Request         as Q
+import qualified Network.Haskoin.Wallet.Response        as R
+import           Network.Haskoin.Wallet.Transaction
+import           Network.Haskoin.Wallet.Types
+import           Test.Framework                         (Test, testGroup)
+import           Test.Framework.Providers.HUnit         (testCase)
+import           Test.HUnit                             (Assertion, assertBool,
+                                                         assertEqual,
+                                                         assertFailure)
 
 type App = SqlPersistT (NoLoggingT (ResourceT IO))
 
@@ -47,134 +54,134 @@ tests =
         [ testCase "Fail create account with wrong keys" $
             assertException
                 (WalletException "Invalid account keys")
-                ( newAccount NewAccount
-                    { newAccountName = "fail-this"
-                    , newAccountType = AccountRegular
+                ( newAccount Q.NewAccount
+                    { Q.newAccountName = "fail-this"
+                    , Q.newAccountType = AccountRegular
                     -- This key does not correspond to the one below
-                    , newAccountMaster = Just "xprv9s21ZrQH143K33Ezpb81k5upGyhrVcwgqNzHRHnQ2kGBPHkJ3sLPjGwj4LML1kr1bLfguJiY21XrYfVrL1CGurfVoMKSPwRdmzt1LwBtVyR"
-                    , newAccountDeriv = Just 0
-                    , newAccountKeys = [xPub1]
-                    , newAccountMnemonic = Nothing
-                    , newAccountPassword = Nothing
-                    , newAccountReadOnly = False
-                    , newAccountEntropy  = Nothing
+                    , Q.newAccountMaster = Just "xprv9s21ZrQH143K33Ezpb81k5upGyhrVcwgqNzHRHnQ2kGBPHkJ3sLPjGwj4LML1kr1bLfguJiY21XrYfVrL1CGurfVoMKSPwRdmzt1LwBtVyR"
+                    , Q.newAccountDeriv = Just 0
+                    , Q.newAccountKeys = [xPub1]
+                    , Q.newAccountMnemonic = Nothing
+                    , Q.newAccountPassword = Nothing
+                    , Q.newAccountReadOnly = False
+                    , Q.newAccountEntropy  = Nothing
                     }
                 )
 
         , testCase "Creating two accounts with the same data should fail" $
             assertException
                 (WalletException "Account already exists") $ do
-                    _ <- newAccount NewAccount
-                        { newAccountName = "main"
-                        , newAccountType = AccountRegular
-                        , newAccountMaster = Just xPrv1
-                        , newAccountDeriv = Just 0
-                        , newAccountKeys = [xPub1]
-                        , newAccountMnemonic = Nothing
-                        , newAccountPassword = Nothing
-                        , newAccountReadOnly = False
-                        , newAccountEntropy  = Nothing
+                    _ <- newAccount Q.NewAccount
+                        { Q.newAccountName = "main"
+                        , Q.newAccountType = AccountRegular
+                        , Q.newAccountMaster = Just xPrv1
+                        , Q.newAccountDeriv = Just 0
+                        , Q.newAccountKeys = [xPub1]
+                        , Q.newAccountMnemonic = Nothing
+                        , Q.newAccountPassword = Nothing
+                        , Q.newAccountReadOnly = False
+                        , Q.newAccountEntropy  = Nothing
                         }
-                    newAccount NewAccount
-                        { newAccountName = "main"
-                        , newAccountType = AccountRegular
-                        , newAccountMaster = Nothing
-                        , newAccountDeriv = Just 0
-                        , newAccountKeys = [xPub1]
-                        , newAccountMnemonic = Nothing
-                        , newAccountPassword = Nothing
-                        , newAccountReadOnly = False
-                        , newAccountEntropy  = Nothing
+                    newAccount Q.NewAccount
+                        { Q.newAccountName = "main"
+                        , Q.newAccountType = AccountRegular
+                        , Q.newAccountMaster = Nothing
+                        , Q.newAccountDeriv = Just 0
+                        , Q.newAccountKeys = [xPub1]
+                        , Q.newAccountMnemonic = Nothing
+                        , Q.newAccountPassword = Nothing
+                        , Q.newAccountReadOnly = False
+                        , Q.newAccountEntropy  = Nothing
                         }
         , testCase "Invalid multisig parameters (0 of 1)" $
             assertException (WalletException "Invalid account type") $
-                newAccount NewAccount
-                    { newAccountName = "multisig-0-of-1"
-                    , newAccountType = AccountMultisig 0 1
-                    , newAccountMaster = Just xPrv1
-                    , newAccountDeriv = Nothing
-                    , newAccountKeys = [xPub1]
-                    , newAccountMnemonic = Nothing
-                    , newAccountPassword = Nothing
-                    , newAccountReadOnly = False
-                    , newAccountEntropy  = Nothing
+                newAccount Q.NewAccount
+                    { Q.newAccountName = "multisig-0-of-1"
+                    , Q.newAccountType = AccountMultisig 0 1
+                    , Q.newAccountMaster = Just xPrv1
+                    , Q.newAccountDeriv = Nothing
+                    , Q.newAccountKeys = [xPub1]
+                    , Q.newAccountMnemonic = Nothing
+                    , Q.newAccountPassword = Nothing
+                    , Q.newAccountReadOnly = False
+                    , Q.newAccountEntropy  = Nothing
                     }
 
         , testCase "Invalid multisig parameters (2 of 1)" $
             assertException (WalletException "Invalid account type") $
-                newAccount NewAccount
-                    { newAccountName = "multisig-2-of-1"
-                    , newAccountType = AccountMultisig 2 1
-                    , newAccountMaster = Just xPrv1
-                    , newAccountDeriv = Nothing
-                    , newAccountKeys = [xPub1]
-                    , newAccountMnemonic = Nothing
-                    , newAccountPassword = Nothing
-                    , newAccountReadOnly = False
-                    , newAccountEntropy  = Nothing
+                newAccount Q.NewAccount
+                    { Q.newAccountName = "multisig-2-of-1"
+                    , Q.newAccountType = AccountMultisig 2 1
+                    , Q.newAccountMaster = Just xPrv1
+                    , Q.newAccountDeriv = Nothing
+                    , Q.newAccountKeys = [xPub1]
+                    , Q.newAccountMnemonic = Nothing
+                    , Q.newAccountPassword = Nothing
+                    , Q.newAccountReadOnly = False
+                    , Q.newAccountEntropy  = Nothing
                     }
 
         , testCase "Invalid multisig parameters (15 of 16)" $
             assertException (WalletException "Invalid account type") $
-                newAccount NewAccount
-                    { newAccountName = "multisig-15-of-16"
-                    , newAccountType = AccountMultisig 15 16
-                    , newAccountMaster = Just xPrv1
-                    , newAccountDeriv = Nothing
-                    , newAccountKeys = [xPub1]
-                    , newAccountMnemonic = Nothing
-                    , newAccountPassword = Nothing
-                    , newAccountReadOnly = False
-                    , newAccountEntropy  = Nothing
+                newAccount Q.NewAccount
+                    { Q.newAccountName = "multisig-15-of-16"
+                    , Q.newAccountType = AccountMultisig 15 16
+                    , Q.newAccountMaster = Just xPrv1
+                    , Q.newAccountDeriv = Nothing
+                    , Q.newAccountKeys = [xPub1]
+                    , Q.newAccountMnemonic = Nothing
+                    , Q.newAccountPassword = Nothing
+                    , Q.newAccountReadOnly = False
+                    , Q.newAccountEntropy  = Nothing
                     }
 
         , testCase "To many multisig keys (3 keys for 1 of 2)" $
             assertException (WalletException "Invalid account keys") $
-                newAccount NewAccount
-                    { newAccountName = "multisig-1-of-2-with-3"
-                    , newAccountType = AccountMultisig 1 2
-                    , newAccountMaster = Just xPrv1
-                    , newAccountDeriv = Nothing
-                    , newAccountKeys =
+                newAccount Q.NewAccount
+                    { Q.newAccountName = "multisig-1-of-2-with-3"
+                    , Q.newAccountType = AccountMultisig 1 2
+                    , Q.newAccountMaster = Just xPrv1
+                    , Q.newAccountDeriv = Nothing
+                    , Q.newAccountKeys =
                         [ xPub1
                         , "xpub661MyMwAqRbcFEPH5Aon6F7edspeu1v6a1Nw5qJgk1aX5XYg1ktBL9Azra2CKaAJ2bHXEXkeKHE3eFaCJktFiA5tSMDQDs6bi83maQtdYby"
                         , "xpub661MyMwAqRbcFtDszBWpawpg4KbNWL9qD4VdRwjd1L5cmcS8nXHWXpg9WL1Xc9Yh7HbQBwWDw37YJfc4AF3YEpvAHEBPBFQPFkUcFHnopw8"
                         ]
-                    , newAccountMnemonic = Nothing
-                    , newAccountPassword = Nothing
-                    , newAccountReadOnly = False
-                    , newAccountEntropy  = Nothing
+                    , Q.newAccountMnemonic = Nothing
+                    , Q.newAccountPassword = Nothing
+                    , Q.newAccountReadOnly = False
+                    , Q.newAccountEntropy  = Nothing
                     }
 
         , testCase "Calling addAccountKeys with an empty key list should fail" $
             assertException
                 (WalletException "Invalid account keys") $ do
-                    res <- newAccount NewAccount
-                        { newAccountName = "multisig-1-of-2-plus-empty"
-                        , newAccountType = AccountMultisig 1 2
-                        , newAccountMaster = Just xPrv1
-                        , newAccountDeriv = Nothing
-                        , newAccountKeys = [xPub1]
-                        , newAccountMnemonic = Nothing
-                        , newAccountPassword = Nothing
-                        , newAccountReadOnly = False
-                        , newAccountEntropy  = Nothing
+                    res <- newAccount Q.NewAccount
+                        { Q.newAccountName = "multisig-1-of-2-plus-empty"
+                        , Q.newAccountType = AccountMultisig 1 2
+                        , Q.newAccountMaster = Just xPrv1
+                        , Q.newAccountDeriv = Nothing
+                        , Q.newAccountKeys = [xPub1]
+                        , Q.newAccountMnemonic = Nothing
+                        , Q.newAccountPassword = Nothing
+                        , Q.newAccountReadOnly = False
+                        , Q.newAccountEntropy  = Nothing
                         }
                     addAccountKeys (fst res) []
 
         , testCase "Calling addAccountKeys on a non-multisig account should fail" $
             assertException
                 (WalletException "The account is already complete") $ do
-                    res <- newAccount NewAccount
-                        { newAccountName = "regular-plus-more"
-                        , newAccountType = AccountRegular
-                        , newAccountMaster = Just xPrv1
-                        , newAccountDeriv = Nothing
-                        , newAccountKeys = [xPub1]
-                        , newAccountMnemonic = Nothing
-                        , newAccountPassword = Nothing
-                        , newAccountReadOnly = False
-                        , newAccountEntropy  = Nothing
+                    res <- newAccount Q.NewAccount
+                        { Q.newAccountName = "regular-plus-more"
+                        , Q.newAccountType = AccountRegular
+                        , Q.newAccountMaster = Just xPrv1
+                        , Q.newAccountDeriv = Nothing
+                        , Q.newAccountKeys = [xPub1]
+                        , Q.newAccountMnemonic = Nothing
+                        , Q.newAccountPassword = Nothing
+                        , Q.newAccountReadOnly = False
+                        , Q.newAccountEntropy  = Nothing
                         }
                     addAccountKeys (fst res)
                         ["xpub661MyMwAqRbcFEPH5Aon6F7edspeu1v6a1Nw5qJgk1aX5XYg1ktBL9Azra2CKaAJ2bHXEXkeKHE3eFaCJktFiA5tSMDQDs6bi83maQtdYby"]
@@ -182,19 +189,19 @@ tests =
         , testCase "Adding keys to a complete multisig account should fail" $
             assertException
                 (WalletException "The account is already complete") $ do
-                    res <- newAccount NewAccount
-                        { newAccountName = "regular-plus-more"
-                        , newAccountType = AccountMultisig 1 2
-                        , newAccountMaster = Just xPrv1
-                        , newAccountDeriv = Nothing
-                        , newAccountKeys =
+                    res <- newAccount Q.NewAccount
+                        { Q.newAccountName = "regular-plus-more"
+                        , Q.newAccountType = AccountMultisig 1 2
+                        , Q.newAccountMaster = Just xPrv1
+                        , Q.newAccountDeriv = Nothing
+                        , Q.newAccountKeys =
                             [ xPub1
                             , "xpub661MyMwAqRbcFEPH5Aon6F7edspeu1v6a1Nw5qJgk1aX5XYg1ktBL9Azra2CKaAJ2bHXEXkeKHE3eFaCJktFiA5tSMDQDs6bi83maQtdYby"
                             ]
-                        , newAccountMnemonic = Nothing
-                        , newAccountPassword = Nothing
-                        , newAccountReadOnly = False
-                        , newAccountEntropy  = Nothing
+                        , Q.newAccountMnemonic = Nothing
+                        , Q.newAccountPassword = Nothing
+                        , Q.newAccountReadOnly = False
+                        , Q.newAccountEntropy  = Nothing
                         }
                     addAccountKeys (fst res)
                         ["xpub661MyMwAqRbcFtDszBWpawpg4KbNWL9qD4VdRwjd1L5cmcS8nXHWXpg9WL1Xc9Yh7HbQBwWDw37YJfc4AF3YEpvAHEBPBFQPFkUcFHnopw8"]
@@ -208,90 +215,90 @@ tests =
     , testGroup "Address tests"
         [ testCase "Decreasing the address gap should fail" $
             assertException (WalletException "The gap of an account can only be increased") $ do
-                res <- newAccount NewAccount
-                    { newAccountName = "reduce-gap"
-                    , newAccountType = AccountRegular
-                    , newAccountMaster = Just xPrv1
-                    , newAccountDeriv = Nothing
-                    , newAccountKeys = [xPub1]
-                    , newAccountMnemonic = Nothing
-                    , newAccountPassword = Nothing
-                    , newAccountReadOnly = False
-                    , newAccountEntropy  = Nothing
+                res <- newAccount Q.NewAccount
+                    { Q.newAccountName = "reduce-gap"
+                    , Q.newAccountType = AccountRegular
+                    , Q.newAccountMaster = Just xPrv1
+                    , Q.newAccountDeriv = Nothing
+                    , Q.newAccountKeys = [xPub1]
+                    , Q.newAccountMnemonic = Nothing
+                    , Q.newAccountPassword = Nothing
+                    , Q.newAccountReadOnly = False
+                    , Q.newAccountEntropy  = Nothing
                     }
                 accE' <- setAccountGap (fst res) 15
                 setAccountGap accE' 14
 
         , testCase "Setting a label on a hidden address key should fail" $
             assertException (WalletException "Invalid address index 10") $ do
-                res <- newAccount NewAccount
-                    { newAccountName = "label-hidden"
-                    , newAccountType = AccountRegular
-                    , newAccountMaster = Just xPrv1
-                    , newAccountDeriv = Nothing
-                    , newAccountKeys = [xPub1]
-                    , newAccountMnemonic = Nothing
-                    , newAccountPassword = Nothing
-                    , newAccountReadOnly = False
-                    , newAccountEntropy  = Nothing
+                res <- newAccount Q.NewAccount
+                    { Q.newAccountName = "label-hidden"
+                    , Q.newAccountType = AccountRegular
+                    , Q.newAccountMaster = Just xPrv1
+                    , Q.newAccountDeriv = Nothing
+                    , Q.newAccountKeys = [xPub1]
+                    , Q.newAccountMnemonic = Nothing
+                    , Q.newAccountPassword = Nothing
+                    , Q.newAccountReadOnly = False
+                    , Q.newAccountEntropy  = Nothing
                     }
                 setAddrLabel (fst res) 10 AddressExternal "Gym membership"
 
         , testCase "Setting a label on an invalid address key should fail" $
             assertException (WalletException "Invalid address index 20") $ do
-                res <- newAccount NewAccount
-                    { newAccountName = "label-invalid"
-                    , newAccountType = AccountRegular
-                    , newAccountMaster = Just xPrv1
-                    , newAccountDeriv = Nothing
-                    , newAccountKeys = [xPub1]
-                    , newAccountMnemonic = Nothing
-                    , newAccountPassword = Nothing
-                    , newAccountReadOnly = False
-                    , newAccountEntropy  = Nothing
+                res <- newAccount Q.NewAccount
+                    { Q.newAccountName = "label-invalid"
+                    , Q.newAccountType = AccountRegular
+                    , Q.newAccountMaster = Just xPrv1
+                    , Q.newAccountDeriv = Nothing
+                    , Q.newAccountKeys = [xPub1]
+                    , Q.newAccountMnemonic = Nothing
+                    , Q.newAccountPassword = Nothing
+                    , Q.newAccountReadOnly = False
+                    , Q.newAccountEntropy  = Nothing
                     }
                 setAddrLabel (fst res) 20 AddressExternal "Gym membership"
 
         , testCase "Requesting an address prvkey on a read-only account should fail" $
             assertException
                 (WalletException "Could not get private key") $ do
-                    res <- newAccount NewAccount
-                        { newAccountName = "label-invalid"
-                        , newAccountType = AccountRegular
-                        , newAccountMaster = Nothing
-                        , newAccountDeriv = Nothing
-                        , newAccountKeys = [xPub1]
-                        , newAccountMnemonic = Nothing
-                        , newAccountPassword = Nothing
-                        , newAccountReadOnly = False
-                        , newAccountEntropy  = Nothing
+                    res <- newAccount Q.NewAccount
+                        { Q.newAccountName = "label-invalid"
+                        , Q.newAccountType = AccountRegular
+                        , Q.newAccountMaster = Nothing
+                        , Q.newAccountDeriv = Nothing
+                        , Q.newAccountKeys = [xPub1]
+                        , Q.newAccountMnemonic = Nothing
+                        , Q.newAccountPassword = Nothing
+                        , Q.newAccountReadOnly = False
+                        , Q.newAccountEntropy  = Nothing
                         }
                     addressPrvKey (fst res) Nothing 2 AddressExternal
         , testCase "Invalid entropy (15)" $ assertException
             (WalletException "Entropy can only be 16, 20, 24, 28 or 32 bytes") $
-                newAccount NewAccount
-                    { newAccountName = "account"
-                    , newAccountType = AccountRegular
-                    , newAccountMaster = Nothing
-                    , newAccountDeriv = Nothing
-                    , newAccountKeys = []
-                    , newAccountMnemonic = Nothing
-                    , newAccountPassword = Nothing
-                    , newAccountReadOnly = False
-                    , newAccountEntropy  = Just 15
+                newAccount Q.NewAccount
+                    { Q.newAccountName = "account"
+                    , Q.newAccountType = AccountRegular
+                    , Q.newAccountMaster = Nothing
+                    , Q.newAccountDeriv = Nothing
+                    , Q.newAccountKeys = []
+                    , Q.newAccountMnemonic = Nothing
+                    , Q.newAccountPassword = Nothing
+                    , Q.newAccountReadOnly = False
+                    , Q.newAccountEntropy  = Just 15
                     }
         , testCase "Invalid entropy (33)" $ assertException
             (WalletException "Entropy can only be 16, 20, 24, 28 or 32 bytes") $
-                newAccount NewAccount
-                    { newAccountName = "account"
-                    , newAccountType = AccountRegular
-                    , newAccountMaster = Nothing
-                    , newAccountDeriv = Nothing
-                    , newAccountKeys = []
-                    , newAccountMnemonic = Nothing
-                    , newAccountPassword = Nothing
-                    , newAccountReadOnly = False
-                    , newAccountEntropy  = Just 33
+                newAccount Q.NewAccount
+                    { Q.newAccountName = "account"
+                    , Q.newAccountType = AccountRegular
+                    , Q.newAccountMaster = Nothing
+                    , Q.newAccountDeriv = Nothing
+                    , Q.newAccountKeys = []
+                    , Q.newAccountMnemonic = Nothing
+                    , Q.newAccountPassword = Nothing
+                    , Q.newAccountReadOnly = False
+                    , Q.newAccountEntropy  = Just 33
                     }
         ]
     , testGroup "Wallet tests"
@@ -383,26 +390,26 @@ fakeTx xs ys =
 
 testDerivations :: App ()
 testDerivations = do
-    accE <- fst <$> newAccount NewAccount
-        { newAccountName = "acc1"
-        , newAccountType = AccountRegular
-        , newAccountDeriv = Just 0
-        , newAccountMaster = Nothing
-        , newAccountMnemonic = Just (cs ms)
-        , newAccountPassword = Nothing
-        , newAccountKeys = []
-        , newAccountReadOnly = False
-        , newAccountEntropy  = Nothing
+    accE <- fst <$> newAccount Q.NewAccount
+        { Q.newAccountName = "acc1"
+        , Q.newAccountType = AccountRegular
+        , Q.newAccountDeriv = Just 0
+        , Q.newAccountMaster = Nothing
+        , Q.newAccountMnemonic = Just (cs ms)
+        , Q.newAccountPassword = Nothing
+        , Q.newAccountKeys = []
+        , Q.newAccountReadOnly = False
+        , Q.newAccountEntropy  = Nothing
         }
 
-    unusedAddresses accE AddressExternal (ListRequest 0 3 False)
+    unusedAddresses accE AddressExternal (Q.List 0 3 False)
         >>= liftIO . assertEqual "Generated external addresses do not match"
             [ "1BThGRupK6Ah44sfCtsg2QkoEDJA58d8in"
             , "1Cf66C6MVTYgMSuXrpn5W1x12RRtAa6v2x"
             , "1Guyp96E7ph4PQJoPpz1DLsash8pqjEdVN"
             ] . map (addrToBase58 . walletAddrAddress) . fst
 
-    unusedAddresses accE AddressInternal (ListRequest 0 3 False)
+    unusedAddresses accE AddressInternal (Q.List 0 3 False)
         >>= liftIO . assertEqual "Generated internal addresses do not match"
             [ "1JGvK2MYQ3wwxMdYeyf7Eg1HeVJuEq3AT1"
             , "1JMTxp3kbXtwHwFMNPCUc2QyjQNQ8ZZxc4"
@@ -423,7 +430,7 @@ assertAddress :: Entity Account
               -> Word32      -- Confirmations
               -> Word32      -- Address Index
               -> AddressType
-              -> [(KeyIndex, BalanceInfo)]
+              -> [(KeyIndex, R.Balance)]
               -> App ()
 assertAddress acc conf addr addrtype b = do
     b' <- addressBalances acc addr addr addrtype conf False
@@ -433,7 +440,7 @@ assertAddressOffline :: Entity Account
                      -> Word32      -- Confirmations
                      -> Word32      -- Address Index
                      -> AddressType
-                     -> [(KeyIndex, BalanceInfo)]
+                     -> [(KeyIndex, R.Balance)]
                      -> App ()
 assertAddressOffline acc conf addr addrtype b = do
     b' <- addressBalances acc addr addr addrtype conf True
@@ -460,16 +467,16 @@ assertTxConfidence ai txh conf = do
 
 testBalances :: App ()
 testBalances = do
-    accE@(Entity ai _) <- fst <$> newAccount NewAccount
-        { newAccountName = "acc1"
-        , newAccountType = AccountRegular
-        , newAccountDeriv = Just 0
-        , newAccountMaster = Nothing
-        , newAccountMnemonic = Just (cs ms)
-        , newAccountPassword = Nothing
-        , newAccountKeys = []
-        , newAccountReadOnly = False
-        , newAccountEntropy  = Nothing
+    accE@(Entity ai _) <- fst <$> newAccount Q.NewAccount
+        { Q.newAccountName = "acc1"
+        , Q.newAccountType = AccountRegular
+        , Q.newAccountDeriv = Just 0
+        , Q.newAccountMaster = Nothing
+        , Q.newAccountMnemonic = Just (cs ms)
+        , Q.newAccountPassword = Nothing
+        , Q.newAccountKeys = []
+        , Q.newAccountReadOnly = False
+        , Q.newAccountEntropy  = Nothing
         }
     let fundingTx = fakeTx
             [ (tid1, 0) ]
@@ -501,10 +508,10 @@ testBalances = do
     assertBalance ai 0 30000000
     assertBalance ai 1 0
 
-    assertAddress accE 0 0 AddressExternal [(0, BalanceInfo 10000000 0 1 0)]
-    assertAddress accE 0 1 AddressExternal [(1, BalanceInfo 20000000 0 1 0)]
-    assertAddress accE 1 0 AddressExternal [(0, BalanceInfo 0 0 0 0)]
-    assertAddress accE 1 1 AddressExternal [(1, BalanceInfo 0 0 0 0)]
+    assertAddress accE 0 0 AddressExternal [(0, R.Balance 10000000 0 1 0)]
+    assertAddress accE 0 1 AddressExternal [(1, R.Balance 20000000 0 1 0)]
+    assertAddress accE 1 0 AddressExternal [(0, R.Balance 0 0 0 0)]
+    assertAddress accE 1 1 AddressExternal [(1, R.Balance 0 0 0 0)]
 
     assertImportTx ai 0 TxPending tx1
 
@@ -512,13 +519,13 @@ testBalances = do
     assertBalance ai 1 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 0 1 AddressExternal
-        [(1, BalanceInfo 20000000 20000000 1 1)]
+        [(1, R.Balance 20000000 20000000 1 1)]
     assertAddress accE 1 0 AddressExternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
     assertAddress accE 1 1 AddressExternal
-        [(1, BalanceInfo 0 0 0 0)]
+        [(1, R.Balance 0 0 0 0)]
 
     -- We re-import tx1. This operation has to be idempotent with respect to
     -- balances.
@@ -528,13 +535,13 @@ testBalances = do
     assertBalance ai 1 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 0 1 AddressExternal
-        [(1, BalanceInfo 20000000 20000000 1 1)]
+        [(1, R.Balance 20000000 20000000 1 1)]
     assertAddress accE 1 0 AddressExternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
     assertAddress accE 1 1 AddressExternal
-        [(1, BalanceInfo 0 0 0 0)]
+        [(1, R.Balance 0 0 0 0)]
 
     -- Importing tx2 twice. This operation has to be idempotent.
     assertImportTx ai 1 TxDead tx2
@@ -544,9 +551,9 @@ testBalances = do
     assertBalance ai 1 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 0 1 AddressExternal
-        [(1, BalanceInfo 20000000 20000000 1 1)]
+        [(1, R.Balance 20000000 20000000 1 1)]
 
     -- Confirm the funding transaction at height 1
     let block1 = fakeNode genesisBlock [txHash fundingTx] 0 1
@@ -557,13 +564,13 @@ testBalances = do
     assertBalance ai 2 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 0 1 AddressExternal
-        [(1, BalanceInfo 20000000 20000000 1 1)]
+        [(1, R.Balance 20000000 20000000 1 1)]
     assertAddress accE 1 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 1 1 AddressExternal
-        [(1, BalanceInfo 20000000 20000000 1 1)]
+        [(1, R.Balance 20000000 20000000 1 1)]
 
     -- Confirm tx1 at height 2
     let block2 = fakeNode block1 [txHash tx1] 0 2
@@ -575,13 +582,13 @@ testBalances = do
     assertBalance ai 3 0
 
     assertAddress accE 2 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 2 1 AddressExternal
-        [(1, BalanceInfo 20000000 20000000 1 1)]
+        [(1, R.Balance 20000000 20000000 1 1)]
     assertAddress accE 3 0 AddressExternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
     assertAddress accE 3 1 AddressExternal
-        [(1, BalanceInfo 0 0 0 0)]
+        [(1, R.Balance 0 0 0 0)]
 
     -- Reorg on tx2
     let block2' = fakeNode block1 [] 1 22
@@ -605,20 +612,20 @@ testBalances = do
     assertBalance ai 4 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 0 1 AddressExternal
-        [(1, BalanceInfo 20000000 0 1 0)]
+        [(1, R.Balance 20000000 0 1 0)]
 
     assertAddress accE 3 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 3 1 AddressExternal
-        [(1, BalanceInfo 20000000 0 1 0)]
+        [(1, R.Balance 20000000 0 1 0)]
     assertAddress accE 0 0 AddressInternal
-        [(0, BalanceInfo 5000000 0 1 0)]
+        [(0, R.Balance 5000000 0 1 0)]
     assertAddress accE 1 0 AddressInternal
-        [(0, BalanceInfo 5000000 0 1 0)]
+        [(0, R.Balance 5000000 0 1 0)]
     assertAddress accE 2 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
     -- Reimporting tx2 should be idempotent and return TxBuilding
     assertImportTx ai 0 TxBuilding tx2
@@ -635,19 +642,19 @@ testBalances = do
         liftIO . assertEqual "Balance is not 0" 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 0 1 AddressExternal
-        [(1, BalanceInfo 20000000 0 1 0)]
+        [(1, R.Balance 20000000 0 1 0)]
     assertAddress accE 3 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 3 1 AddressExternal
-        [(1, BalanceInfo 20000000 0 1 0)]
+        [(1, R.Balance 20000000 0 1 0)]
     assertAddress accE 0 0 AddressInternal
-        [(0, BalanceInfo 5000000 0 1 0)]
+        [(0, R.Balance 5000000 0 1 0)]
     assertAddress accE 1 0 AddressInternal
-        [(0, BalanceInfo 5000000 0 1 0)]
+        [(0, R.Balance 5000000 0 1 0)]
     assertAddress accE 2 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
     -- Reorg back onto tx1
     let block3 = fakeNode block2 [] 0 3
@@ -663,33 +670,33 @@ testBalances = do
     assertBalance ai 5 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 0 1 AddressExternal
-        [(1, BalanceInfo 20000000 20000000 1 1)]
+        [(1, R.Balance 20000000 20000000 1 1)]
     assertAddress accE 4 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 4 1 AddressExternal
-        [(1, BalanceInfo 20000000 20000000 1 1)]
+        [(1, R.Balance 20000000 20000000 1 1)]
     assertAddress accE 5 0 AddressExternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
     assertAddress accE 5 1 AddressExternal
-        [(1, BalanceInfo 0 0 0 0)]
+        [(1, R.Balance 0 0 0 0)]
     assertAddress accE 0 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
 -- tx1, tx2 and tx3 form a chain, and tx4 is in conflict with tx1
 testConflictBalances :: App ()
 testConflictBalances = do
-    accE@(Entity ai _) <- fst <$> newAccount NewAccount
-        { newAccountName = "acc1"
-        , newAccountType = AccountRegular
-        , newAccountDeriv = Just 0
-        , newAccountMaster = Nothing
-        , newAccountMnemonic = Just (cs ms)
-        , newAccountPassword = Nothing
-        , newAccountKeys = []
-        , newAccountReadOnly = False
-        , newAccountEntropy  = Nothing
+    accE@(Entity ai _) <- fst <$> newAccount Q.NewAccount
+        { Q.newAccountName = "acc1"
+        , Q.newAccountType = AccountRegular
+        , Q.newAccountDeriv = Just 0
+        , Q.newAccountMaster = Nothing
+        , Q.newAccountMnemonic = Just (cs ms)
+        , Q.newAccountPassword = Nothing
+        , Q.newAccountKeys = []
+        , Q.newAccountReadOnly = False
+        , Q.newAccountEntropy  = Nothing
         }
     let tx1 = fakeTx
             [ (tid1, 4) ]
@@ -714,7 +721,7 @@ testConflictBalances = do
     assertBalance ai 1 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 0 1 0)]
+        [(0, R.Balance 10000000 0 1 0)]
 
     -- Import second transaction
     assertImportTx ai 1 TxPending tx2
@@ -723,9 +730,9 @@ testConflictBalances = do
     assertBalance ai 1 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 0 0 AddressInternal
-        [(0, BalanceInfo 4000000 0 1 0)]
+        [(0, R.Balance 4000000 0 1 0)]
 
     -- Let's confirm these two transactions
     let block1 = fakeNode genesisBlock [txHash tx1] 0 1
@@ -739,13 +746,13 @@ testConflictBalances = do
     assertBalance ai 3 0
 
     assertAddress accE 1 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 1 0 AddressInternal
-        [(0, BalanceInfo 4000000 0 1 0)]
+        [(0, R.Balance 4000000 0 1 0)]
     assertAddress accE 2 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 2 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
     -- Import third transaction
     assertImportTx ai 0 TxPending tx3
@@ -756,17 +763,17 @@ testConflictBalances = do
     assertBalance ai 3 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 0 0 AddressInternal
-        [(0, BalanceInfo 4000000 4000000 1 1)]
+        [(0, R.Balance 4000000 4000000 1 1)]
     assertAddress accE 1 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 1 0 AddressInternal
-        [(0, BalanceInfo 4000000 4000000 1 1)]
+        [(0, R.Balance 4000000 4000000 1 1)]
     assertAddress accE 2 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 2 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
     -- Now let's add tx4 which is in conflict with tx1
     assertImportTx ai 0 TxDead tx4
@@ -777,17 +784,17 @@ testConflictBalances = do
     assertBalance ai 3 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 0 0 AddressInternal
-        [(0, BalanceInfo 4000000 4000000 1 1)]
+        [(0, R.Balance 4000000 4000000 1 1)]
     assertAddress accE 1 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 1 0 AddressInternal
-        [(0, BalanceInfo 4000000 4000000 1 1)]
+        [(0, R.Balance 4000000 4000000 1 1)]
     assertAddress accE 2 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 2 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
     -- Now we trigger a reorg that validates tx4. tx1, tx2 and tx3 should be dead
     let block1' = fakeNode genesisBlock [] 1 11
@@ -807,13 +814,13 @@ testConflictBalances = do
     assertBalance ai 3 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 20000000 0 1 0)]
+        [(0, R.Balance 20000000 0 1 0)]
     assertAddress accE 0 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
     assertAddress accE 2 0 AddressExternal
-        [(0, BalanceInfo 20000000 0 1 0)]
+        [(0, R.Balance 20000000 0 1 0)]
     assertAddress accE 3 0 AddressExternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
     -- Reorg back to tx1, tx2 and tx3
     let block3 = fakeNode block2 [] 0 3
@@ -840,32 +847,32 @@ testConflictBalances = do
     assertBalance ai 5 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 0 0 AddressInternal
-        [(0, BalanceInfo 4000000 0 1 0)]
+        [(0, R.Balance 4000000 0 1 0)]
     assertAddress accE 3 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 3 0 AddressInternal
-        [(0, BalanceInfo 4000000 0 1 0)]
+        [(0, R.Balance 4000000 0 1 0)]
     assertAddress accE 4 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddress accE 4 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
     assertAddress accE 5 0 AddressExternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
 testOffline :: App ()
 testOffline = do
-    accE@(Entity ai _) <- fst <$> newAccount NewAccount
-        { newAccountName = "acc1"
-        , newAccountType = AccountRegular
-        , newAccountDeriv = Just 0
-        , newAccountMaster = Nothing
-        , newAccountMnemonic = Just (cs ms)
-        , newAccountPassword = Nothing
-        , newAccountKeys = []
-        , newAccountReadOnly = False
-        , newAccountEntropy  = Nothing
+    accE@(Entity ai _) <- fst <$> newAccount Q.NewAccount
+        { Q.newAccountName = "acc1"
+        , Q.newAccountType = AccountRegular
+        , Q.newAccountDeriv = Just 0
+        , Q.newAccountMaster = Nothing
+        , Q.newAccountMnemonic = Just (cs ms)
+        , Q.newAccountPassword = Nothing
+        , Q.newAccountKeys = []
+        , Q.newAccountReadOnly = False
+        , Q.newAccountEntropy  = Nothing
         }
     let tx1 = fakeTx
             [ (tid1, 4) ]
@@ -890,9 +897,9 @@ testOffline = do
     assertBalance        ai 1 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 0 1 0)]
+        [(0, R.Balance 10000000 0 1 0)]
 
     -- Reimporting a transaction should me idempotent
     assertImportTxOffline ai 0 TxOffline tx1
@@ -902,9 +909,9 @@ testOffline = do
     assertBalance        ai 1 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 0 1 0)]
+        [(0, R.Balance 10000000 0 1 0)]
 
     -- Import tx2
     assertImportTxOffline ai 1 TxOffline tx2
@@ -912,9 +919,9 @@ testOffline = do
     assertBalanceOffline ai 0 4000000
 
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 4000000 0 1 0)]
+        [(0, R.Balance 4000000 0 1 0)]
 
     -- Import tx3
     assertImportTxOffline ai 0 TxOffline tx3
@@ -922,9 +929,9 @@ testOffline = do
     assertBalanceOffline ai 0 0
 
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 4000000 4000000 1 1)]
+        [(0, R.Balance 4000000 4000000 1 1)]
 
     -- Import tx4
     assertImportTxOffline ai 0 TxOffline tx4
@@ -936,9 +943,9 @@ testOffline = do
     assertBalanceOffline ai 0 20000000
 
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 20000000 0 1 0)]
+        [(0, R.Balance 20000000 0 1 0)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
     -- importTx should be idempotent
     assertImportTxOffline ai 0 TxOffline tx4
@@ -946,9 +953,9 @@ testOffline = do
     assertBalanceOffline ai 0 20000000
 
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 20000000 0 1 0)]
+        [(0, R.Balance 20000000 0 1 0)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
 
 tid0 :: TxHash
@@ -956,16 +963,16 @@ tid0 = "0000000000000000000000000000000000000000000000000000000000000000"
 
 testCoinbaseTxs :: App ()
 testCoinbaseTxs = do
-    (Entity ai _) <- fst <$> newAccount NewAccount
-        { newAccountName = "acc1"
-        , newAccountType = AccountRegular
-        , newAccountDeriv = Just 0
-        , newAccountMaster = Nothing
-        , newAccountMnemonic = Just (cs ms)
-        , newAccountPassword = Nothing
-        , newAccountKeys = []
-        , newAccountReadOnly = False
-        , newAccountEntropy  = Nothing
+    (Entity ai _) <- fst <$> newAccount Q.NewAccount
+        { Q.newAccountName = "acc1"
+        , Q.newAccountType = AccountRegular
+        , Q.newAccountDeriv = Just 0
+        , Q.newAccountMaster = Nothing
+        , Q.newAccountMnemonic = Just (cs ms)
+        , Q.newAccountPassword = Nothing
+        , Q.newAccountKeys = []
+        , Q.newAccountReadOnly = False
+        , Q.newAccountEntropy  = Nothing
         }
     let cb1 = fakeTx
             [ (tid0, 0) ]
@@ -1008,16 +1015,16 @@ testCoinbaseTxs = do
 
 testKillOffline :: App ()
 testKillOffline = do
-    accE@(Entity ai _) <- fst <$> newAccount NewAccount
-        { newAccountName = "acc1"
-        , newAccountType = AccountRegular
-        , newAccountDeriv = Just 0
-        , newAccountMaster = Nothing
-        , newAccountMnemonic = Just (cs ms)
-        , newAccountPassword = Nothing
-        , newAccountKeys = []
-        , newAccountReadOnly = False
-        , newAccountEntropy  = Nothing
+    accE@(Entity ai _) <- fst <$> newAccount Q.NewAccount
+        { Q.newAccountName = "acc1"
+        , Q.newAccountType = AccountRegular
+        , Q.newAccountDeriv = Just 0
+        , Q.newAccountMaster = Nothing
+        , Q.newAccountMnemonic = Just (cs ms)
+        , Q.newAccountPassword = Nothing
+        , Q.newAccountKeys = []
+        , Q.newAccountReadOnly = False
+        , Q.newAccountEntropy  = Nothing
         }
     let tx1 = fakeTx
             [ (tid1, 4) ]
@@ -1045,7 +1052,7 @@ testKillOffline = do
     assertBalance        ai 1 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 0 1 0)]
+        [(0, R.Balance 10000000 0 1 0)]
 
     -- Import tx2 as offline
     assertImportTxOffline ai 1 TxOffline tx2
@@ -1056,13 +1063,13 @@ testKillOffline = do
     assertBalanceOffline ai 1 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 0 1 0)]
+        [(0, R.Balance 10000000 0 1 0)]
     assertAddress accE 0 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 4000000 0 1 0)]
+        [(0, R.Balance 4000000 0 1 0)]
 
     -- Import tx3 as offline
     assertImportTxOffline ai 0 TxOffline tx3
@@ -1073,13 +1080,13 @@ testKillOffline = do
     assertBalanceOffline ai 1 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 0 1 0)]
+        [(0, R.Balance 10000000 0 1 0)]
     assertAddress accE 0 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 4000000 4000000 1 1)]
+        [(0, R.Balance 4000000 4000000 1 1)]
 
     -- Import tx4 as a network transaction. It should override tx2 and tx3.
     assertImportTx ai 0 TxPending tx4
@@ -1093,13 +1100,13 @@ testKillOffline = do
     assertBalanceOffline ai 1 0
 
     assertAddress accE 0 0 AddressExternal
-        [(0, BalanceInfo 15000000 10000000 2 1)]
+        [(0, R.Balance 15000000 10000000 2 1)]
     assertAddress accE 0 0 AddressInternal
-        [(0, BalanceInfo 3000000 0 1 0)]
+        [(0, R.Balance 3000000 0 1 0)]
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 15000000 10000000 2 1)]
+        [(0, R.Balance 15000000 10000000 2 1)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 3000000 0 1 0)]
+        [(0, R.Balance 3000000 0 1 0)]
 
 testOfflineExceptions :: Assertion
 testOfflineExceptions = do
@@ -1119,32 +1126,32 @@ testOfflineExceptions = do
             [ ("1BThGRupK6Ah44sfCtsg2QkoEDJA58d8in", 20000000) ]
 
     assertException (WalletException "Could not import offline transaction") $ do
-        _ <- newAccount NewAccount
-            { newAccountName = "acc1"
-            , newAccountType = AccountRegular
-            , newAccountDeriv = Just 0
-            , newAccountMaster = Nothing
-            , newAccountMnemonic = Just (cs ms)
-            , newAccountPassword = Nothing
-            , newAccountKeys = []
-            , newAccountReadOnly = False
-            , newAccountEntropy  = Nothing
+        _ <- newAccount Q.NewAccount
+            { Q.newAccountName = "acc1"
+            , Q.newAccountType = AccountRegular
+            , Q.newAccountDeriv = Just 0
+            , Q.newAccountMaster = Nothing
+            , Q.newAccountMnemonic = Just (cs ms)
+            , Q.newAccountPassword = Nothing
+            , Q.newAccountKeys = []
+            , Q.newAccountReadOnly = False
+            , Q.newAccountEntropy  = Nothing
             }
         Entity ai _ <- getAccount "acc1"
         assertImportTx ai 1 TxPending tx1
         importTx tx4 Nothing ai
 
     assertException (WalletException "Could not import offline transaction") $ do
-        _ <- newAccount NewAccount
-            { newAccountName = "acc1"
-            , newAccountType = AccountRegular
-            , newAccountDeriv = Just 0
-            , newAccountMaster = Nothing
-            , newAccountMnemonic = Just (cs ms)
-            , newAccountPassword = Nothing
-            , newAccountKeys = []
-            , newAccountReadOnly = False
-            , newAccountEntropy  = Nothing
+        _ <- newAccount Q.NewAccount
+            { Q.newAccountName = "acc1"
+            , Q.newAccountType = AccountRegular
+            , Q.newAccountDeriv = Just 0
+            , Q.newAccountMaster = Nothing
+            , Q.newAccountMnemonic = Just (cs ms)
+            , Q.newAccountPassword = Nothing
+            , Q.newAccountKeys = []
+            , Q.newAccountReadOnly = False
+            , Q.newAccountEntropy  = Nothing
             }
         Entity ai _ <- getAccount "acc1"
         assertImportTx ai 1 TxPending tx4
@@ -1153,16 +1160,16 @@ testOfflineExceptions = do
         importTx tx3 Nothing ai
 
     assertException (WalletException "Could not import offline transaction") $ do
-        _ <- newAccount NewAccount
-            { newAccountName = "acc1"
-            , newAccountType = AccountRegular
-            , newAccountDeriv = Just 0
-            , newAccountMaster = Nothing
-            , newAccountMnemonic = Just (cs ms)
-            , newAccountPassword = Nothing
-            , newAccountKeys = []
-            , newAccountReadOnly = False
-            , newAccountEntropy  = Nothing
+        _ <- newAccount Q.NewAccount
+            { Q.newAccountName = "acc1"
+            , Q.newAccountType = AccountRegular
+            , Q.newAccountDeriv = Just 0
+            , Q.newAccountMaster = Nothing
+            , Q.newAccountMnemonic = Just (cs ms)
+            , Q.newAccountPassword = Nothing
+            , Q.newAccountKeys = []
+            , Q.newAccountReadOnly = False
+            , Q.newAccountEntropy  = Nothing
             }
         Entity ai _ <- getAccount "acc1"
         assertImportTx ai 1 TxPending tx1
@@ -1171,27 +1178,27 @@ testOfflineExceptions = do
 -- This test create a multisig account with the key of testImportMultisig2
 testImportMultisig :: App ()
 testImportMultisig = do
-    accE1@(Entity ai1 _) <- fst <$> newAccount NewAccount
-        { newAccountName = "ms1"
-        , newAccountType = AccountMultisig 2 2
-        , newAccountDeriv = Just 0
-        , newAccountMaster = Nothing
-        , newAccountMnemonic = Just (cs ms)
-        , newAccountPassword = Nothing
-        , newAccountKeys = ["xpub6C5bmQQw4h4DVMVydW4bhtuz4jZpUpsrvfMYdZXVVuXyePRcDhBzXufZ5sfSZqtcnXPtDCYyAAPPkuAKEtasfRo9RatgFNP4X58zM1QjjYK"]
-        , newAccountReadOnly = False
-        , newAccountEntropy  = Nothing
+    accE1@(Entity ai1 _) <- fst <$> newAccount Q.NewAccount
+        { Q.newAccountName = "ms1"
+        , Q.newAccountType = AccountMultisig 2 2
+        , Q.newAccountDeriv = Just 0
+        , Q.newAccountMaster = Nothing
+        , Q.newAccountMnemonic = Just (cs ms)
+        , Q.newAccountPassword = Nothing
+        , Q.newAccountKeys = ["xpub6C5bmQQw4h4DVMVydW4bhtuz4jZpUpsrvfMYdZXVVuXyePRcDhBzXufZ5sfSZqtcnXPtDCYyAAPPkuAKEtasfRo9RatgFNP4X58zM1QjjYK"]
+        , Q.newAccountReadOnly = False
+        , Q.newAccountEntropy  = Nothing
         }
-    accE2@(Entity ai2 _) <- fst <$> newAccount NewAccount
-        { newAccountName = "ms2"
-        , newAccountType = AccountMultisig 2 2
-        , newAccountDeriv = Just 1
-        , newAccountMaster = Nothing
-        , newAccountMnemonic = Just (cs ms)
-        , newAccountPassword = Nothing
-        , newAccountKeys = ["xpub6C5bmQQw4h4DSHbWsT7GDaU1CxcamCwTGRo81T2g9VewnEyb16eHwzojDPsZguGizLD3ttFynKPby7ABY4MQ3xAf5DNafj32uf84Gw48Phb"]
-        , newAccountReadOnly = False
-        , newAccountEntropy  = Nothing
+    accE2@(Entity ai2 _) <- fst <$> newAccount Q.NewAccount
+        { Q.newAccountName = "ms2"
+        , Q.newAccountType = AccountMultisig 2 2
+        , Q.newAccountDeriv = Just 1
+        , Q.newAccountMaster = Nothing
+        , Q.newAccountMnemonic = Just (cs ms)
+        , Q.newAccountPassword = Nothing
+        , Q.newAccountKeys = ["xpub6C5bmQQw4h4DSHbWsT7GDaU1CxcamCwTGRo81T2g9VewnEyb16eHwzojDPsZguGizLD3ttFynKPby7ABY4MQ3xAf5DNafj32uf84Gw48Phb"]
+        , Q.newAccountReadOnly = False
+        , Q.newAccountEntropy  = Nothing
         }
     let fundingTx = createTx
             1
@@ -1210,7 +1217,8 @@ testImportMultisig = do
 
     -- Create a transaction which has 0 signatures in ms1
     tx1 <- fst <$> createWalletTx accE1 Nothing
-           ( CreateTx
+           ( Q.CreateTx
+               "ms1"
                [ ( fromJust $ base58ToAddr "3AV9s2W9atAaChWdwTpRv8qvTHcV7L1zyj"
                  , 5000000
                  )
@@ -1225,7 +1233,7 @@ testImportMultisig = do
         . assertEqual "Wrong txhash in coins" []
         . map (walletCoinHash . entityVal . inCoinDataCoin)
 
-    txs Nothing ai1 (ListRequest 0 10 False)
+    txs Nothing ai1 (Q.List 0 10 False)
         >>= liftIO
         . assertEqual "Wrong txhash in tx list"
             (sort [txHash fundingTx, walletTxHash tx1])
@@ -1252,7 +1260,7 @@ testImportMultisig = do
         . assertEqual "Wrong txhash in coins" []
         . map (walletCoinHash . entityVal . inCoinDataCoin)
 
-    txs Nothing ai2 (ListRequest 0 10 False)
+    txs Nothing ai2 (Q.List 0 10 False)
         >>= liftIO
         . assertEqual "Wrong txhash in tx list"
             (sort [txHash fundingTx, walletTxHash tx2])
@@ -1274,7 +1282,7 @@ testImportMultisig = do
             [walletTxHash tx3, walletTxHash tx3]
         . map (walletCoinHash . entityVal . inCoinDataCoin)
 
-    txs Nothing ai2 (ListRequest 0 10 False)
+    txs Nothing ai2 (Q.List 0 10 False)
         >>= liftIO
         . assertEqual "Wrong txhash in tx list"
             (sort [txHash fundingTx, walletTxHash tx3])
@@ -1296,7 +1304,7 @@ testImportMultisig = do
             [walletTxHash tx3, walletTxHash tx3]
         . map (walletCoinHash . entityVal . inCoinDataCoin)
 
-    txs Nothing ai1 (ListRequest 0 10 False)
+    txs Nothing ai1 (Q.List 0 10 False)
         >>= liftIO
         . assertEqual "Wrong txhash in tx list"
             (sort [txHash fundingTx, walletTxHash tx3])
@@ -1319,7 +1327,7 @@ testImportMultisig = do
             [walletTxHash tx5, walletTxHash tx5]
         . map (walletCoinHash . entityVal . inCoinDataCoin)
 
-    txs Nothing ai1 (ListRequest 0 10 False)
+    txs Nothing ai1 (Q.List 0 10 False)
         >>= liftIO
         . assertEqual "Wrong txhash in tx list"
             (sort [txHash fundingTx, walletTxHash tx5])
@@ -1331,16 +1339,16 @@ testImportMultisig = do
 
 testDeleteTx :: App ()
 testDeleteTx = do
-    accE@(Entity ai _) <- fst <$> newAccount NewAccount
-        { newAccountName = "acc1"
-        , newAccountType = AccountRegular
-        , newAccountDeriv = Just 0
-        , newAccountMaster = Nothing
-        , newAccountMnemonic = Just (cs ms)
-        , newAccountPassword = Nothing
-        , newAccountKeys = []
-        , newAccountReadOnly = False
-        , newAccountEntropy  = Nothing
+    accE@(Entity ai _) <- fst <$> newAccount Q.NewAccount
+        { Q.newAccountName = "acc1"
+        , Q.newAccountType = AccountRegular
+        , Q.newAccountDeriv = Just 0
+        , Q.newAccountMaster = Nothing
+        , Q.newAccountMnemonic = Just (cs ms)
+        , Q.newAccountPassword = Nothing
+        , Q.newAccountKeys = []
+        , Q.newAccountReadOnly = False
+        , Q.newAccountEntropy  = Nothing
         }
     let tx1 = fakeTx
             [ (tid1, 4) ]
@@ -1361,9 +1369,9 @@ testDeleteTx = do
     assertBalance ai 0 0
 
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 4000000 4000000 1 1)]
+        [(0, R.Balance 4000000 4000000 1 1)]
 
     tx2M' <- getTx $ txHash tx2
     liftIO $ assertBool "Transaction 2 not found" $ isJust tx2M'
@@ -1379,33 +1387,33 @@ testDeleteTx = do
     assertBalance ai 0 10000000
 
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 0 1 0)]
+        [(0, R.Balance 10000000 0 1 0)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
 testDeleteUnsignedTx :: App ()
 testDeleteUnsignedTx = do
-    accE1@(Entity ai1 _) <- fst <$> newAccount NewAccount
-        { newAccountName = "ms1"
-        , newAccountType = AccountMultisig 2 2
-        , newAccountDeriv = Just 0
-        , newAccountMaster = Nothing
-        , newAccountMnemonic = Just (cs ms)
-        , newAccountPassword = Nothing
-        , newAccountKeys = ["xpub6C5bmQQw4h4DVMVydW4bhtuz4jZpUpsrvfMYdZXVVuXyePRcDhBzXufZ5sfSZqtcnXPtDCYyAAPPkuAKEtasfRo9RatgFNP4X58zM1QjjYK"]
-        , newAccountReadOnly = False
-        , newAccountEntropy  = Nothing
+    accE1@(Entity ai1 _) <- fst <$> newAccount Q.NewAccount
+        { Q.newAccountName = "ms1"
+        , Q.newAccountType = AccountMultisig 2 2
+        , Q.newAccountDeriv = Just 0
+        , Q.newAccountMaster = Nothing
+        , Q.newAccountMnemonic = Just (cs ms)
+        , Q.newAccountPassword = Nothing
+        , Q.newAccountKeys = ["xpub6C5bmQQw4h4DVMVydW4bhtuz4jZpUpsrvfMYdZXVVuXyePRcDhBzXufZ5sfSZqtcnXPtDCYyAAPPkuAKEtasfRo9RatgFNP4X58zM1QjjYK"]
+        , Q.newAccountReadOnly = False
+        , Q.newAccountEntropy  = Nothing
         }
-    Entity ai2 _ <- fst <$> newAccount NewAccount
-        { newAccountName = "ms2"
-        , newAccountType = AccountMultisig 2 2
-        , newAccountDeriv = Just 1
-        , newAccountMaster = Nothing
-        , newAccountMnemonic = Just (cs ms)
-        , newAccountPassword = Nothing
-        , newAccountKeys = ["xpub6C5bmQQw4h4DSHbWsT7GDaU1CxcamCwTGRo81T2g9VewnEyb16eHwzojDPsZguGizLD3ttFynKPby7ABY4MQ3xAf5DNafj32uf84Gw48Phb"]
-        , newAccountReadOnly = False
-        , newAccountEntropy  = Nothing
+    Entity ai2 _ <- fst <$> newAccount Q.NewAccount
+        { Q.newAccountName = "ms2"
+        , Q.newAccountType = AccountMultisig 2 2
+        , Q.newAccountDeriv = Just 1
+        , Q.newAccountMaster = Nothing
+        , Q.newAccountMnemonic = Just (cs ms)
+        , Q.newAccountPassword = Nothing
+        , Q.newAccountKeys = ["xpub6C5bmQQw4h4DSHbWsT7GDaU1CxcamCwTGRo81T2g9VewnEyb16eHwzojDPsZguGizLD3ttFynKPby7ABY4MQ3xAf5DNafj32uf84Gw48Phb"]
+        , Q.newAccountReadOnly = False
+        , Q.newAccountEntropy  = Nothing
         }
     let fundingTx = createTx
             1
@@ -1424,7 +1432,8 @@ testDeleteUnsignedTx = do
 
     -- Create a transaction which has 0 signatures in ms1
     tx1 <- fst <$> createWalletTx accE1 Nothing
-           ( CreateTx
+           ( Q.CreateTx
+               "ms1"
                [ ( fromJust $ base58ToAddr "3AV9s2W9atAaChWdwTpRv8qvTHcV7L1zyj"
                  , 5000000
                  )
@@ -1439,7 +1448,7 @@ testDeleteUnsignedTx = do
         . assertEqual "Wrong txhash in coins" []
         . map (walletCoinHash . entityVal . inCoinDataCoin)
 
-    txs Nothing ai1 (ListRequest 0 10 False)
+    txs Nothing ai1 (Q.List 0 10 False)
         >>= liftIO
         . assertEqual "Wrong txhash in tx list"
             (sort [txHash fundingTx, walletTxHash tx1])
@@ -1458,16 +1467,16 @@ testDeleteUnsignedTx = do
 
 testNotification :: App ()
 testNotification = do
-    _ <- newAccount NewAccount
-        { newAccountName = "acc1"
-        , newAccountType = AccountRegular
-        , newAccountDeriv = Just 0
-        , newAccountMaster = Nothing
-        , newAccountMnemonic = Just (cs ms)
-        , newAccountPassword = Nothing
-        , newAccountKeys = []
-        , newAccountReadOnly = False
-        , newAccountEntropy  = Nothing
+    _ <- newAccount Q.NewAccount
+        { Q.newAccountName = "acc1"
+        , Q.newAccountType = AccountRegular
+        , Q.newAccountDeriv = Just 0
+        , Q.newAccountMaster = Nothing
+        , Q.newAccountMnemonic = Just (cs ms)
+        , Q.newAccountPassword = Nothing
+        , Q.newAccountKeys = []
+        , Q.newAccountReadOnly = False
+        , Q.newAccountEntropy  = Nothing
         }
     let tx1 = fakeTx
             [ (tid1, 4) ]
@@ -1486,15 +1495,15 @@ testNotification = do
     _ <- importNetTx tx1 (Just notifChan)
     tx1NM <- liftIO $ atomically $ readTBMChan notifChan
     liftIO $ case tx1NM of
-        Just (NotifTx JsonTx{..}) ->
-            assertEqual "Notif hash does not match" (txHash tx1) jsonTxHash
+        Just (R.NotifTx R.Tx{..}) ->
+            assertEqual "Notif hash does not match" (txHash tx1) txTxHash
         _ -> assertFailure "Transaction notification is not the right type"
 
     _ <- importNetTx tx2 (Just notifChan)
     tx2NM <- liftIO $ atomically $ readTBMChan notifChan
     liftIO $ case tx2NM of
-        Just (NotifTx JsonTx{..}) ->
-            assertEqual "Notif hash does not match" (txHash tx2) jsonTxHash
+        Just (R.NotifTx R.Tx{..}) ->
+            assertEqual "Notif hash does not match" (txHash tx2) txTxHash
         _ -> assertFailure "Transaction notification is not the right type"
 
     _ <- importNetTx tx3 Nothing
@@ -1506,27 +1515,27 @@ testNotification = do
     importMerkles best txs1 (Just notifChan)
     b1NM <- liftIO $ atomically $ readTBMChan notifChan
     liftIO $ case b1NM of
-        Just (NotifBlock JsonBlock{..}) ->
+        Just (R.NotifBlock R.Block{..}) ->
             assertEqual "Block hash does not match"
-                (nodeHash block1) jsonBlockHash
+                (nodeHash block1) blockHash
         _ -> assertFailure "Block notification not the right type"
     tx1NM' <- liftIO $ atomically $ readTBMChan notifChan
     liftIO $ case tx1NM' of
-        Just (NotifTx JsonTx{..}) ->
+        Just (R.NotifTx R.Tx{..}) ->
             assertEqual "Transaction list does not match" (txHash tx1)
-                jsonTxHash
+                txTxHash
         _ -> assertFailure "Transaction notification not the right type"
     b2NM <- liftIO $ atomically $ readTBMChan notifChan
     liftIO $ case b2NM of
-        Just (NotifBlock JsonBlock{..}) ->
+        Just (R.NotifBlock R.Block{..}) ->
             assertEqual "Block hash does not match"
-                (nodeHash block2) jsonBlockHash
+                (nodeHash block2) blockHash
         _ -> assertFailure "Block notification not the right type"
     tx2NM' <- liftIO $ atomically $ readTBMChan notifChan
     liftIO $ case tx2NM' of
-        Just (NotifTx JsonTx{..}) ->
+        Just (R.NotifTx R.Tx{..}) ->
             assertEqual "Transaction list does not match" (txHash tx2)
-                jsonTxHash
+                txTxHash
         _ -> assertFailure "Transaction notification not the right type"
 
 
@@ -1536,38 +1545,38 @@ testNotification = do
     importMerkles reorg txs2 (Just notifChan)
     b3NM <- liftIO $ atomically $ readTBMChan notifChan
     liftIO $ case b3NM of
-        Just (NotifBlock JsonBlock{..}) ->
+        Just (R.NotifBlock R.Block{..}) ->
             assertEqual "Block hash does not match"
-                (nodeHash block2') jsonBlockHash
+                (nodeHash block2') blockHash
         _ -> assertFailure "Block notification not the right type"
     tx3NM2 <- liftIO $ atomically $ readTBMChan notifChan
     liftIO $ case tx3NM2 of
-        Just (NotifTx JsonTx{..}) ->
+        Just (R.NotifTx R.Tx{..}) ->
             assertEqual "Transaction does not match"
                 (txHash tx2)
-                jsonTxHash
+                txTxHash
         _ -> assertFailure "Transaction notification not the right type"
     tx3NM3 <- liftIO $ atomically $ readTBMChan notifChan
     liftIO $ case tx3NM3 of
-        Just (NotifTx JsonTx{..}) ->
+        Just (R.NotifTx R.Tx{..}) ->
             assertEqual "Transaction does not match"
                 (txHash tx3)
-                jsonTxHash
+                txTxHash
         _ -> assertFailure "Transaction notification not the right type"
 
 
 testKillTx :: App ()
 testKillTx = do
-    accE@(Entity ai _) <- fst <$> newAccount NewAccount
-        { newAccountName = "acc1"
-        , newAccountType = AccountRegular
-        , newAccountDeriv = Just 0
-        , newAccountMaster = Nothing
-        , newAccountMnemonic = Just (cs ms)
-        , newAccountPassword = Nothing
-        , newAccountKeys = []
-        , newAccountReadOnly = False
-        , newAccountEntropy  = Nothing
+    accE@(Entity ai _) <- fst <$> newAccount Q.NewAccount
+        { Q.newAccountName = "acc1"
+        , Q.newAccountType = AccountRegular
+        , Q.newAccountDeriv = Just 0
+        , Q.newAccountMaster = Nothing
+        , Q.newAccountMnemonic = Just (cs ms)
+        , Q.newAccountPassword = Nothing
+        , Q.newAccountKeys = []
+        , Q.newAccountReadOnly = False
+        , Q.newAccountEntropy  = Nothing
         }
     let tx1 = fakeTx
             [ (tid1, 4) ]
@@ -1588,18 +1597,18 @@ testKillTx = do
     assertBalanceOffline ai 0 0
 
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 4000000 4000000 1 1)]
+        [(0, R.Balance 4000000 4000000 1 1)]
 
     killTxs Nothing [txHash tx2]
 
     assertBalanceOffline ai 0 10000000
 
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 0 1 0)]
+        [(0, R.Balance 10000000 0 1 0)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
     -- Killing a transaction should be idempotent
     killTxs Nothing [txHash tx2]
@@ -1607,27 +1616,27 @@ testKillTx = do
     assertBalanceOffline ai 0 10000000
 
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 0 1 0)]
+        [(0, R.Balance 10000000 0 1 0)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
     killTxs Nothing [txHash tx3]
 
     assertBalanceOffline ai 0 10000000
 
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 0 1 0)]
+        [(0, R.Balance 10000000 0 1 0)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 0 0 0 0)]
+        [(0, R.Balance 0 0 0 0)]
 
     reviveTx Nothing tx2
 
     assertBalanceOffline ai 0 4000000
 
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 4000000 0 1 0)]
+        [(0, R.Balance 4000000 0 1 0)]
 
     -- Reviving a transaction should be idempotent
     reviveTx Nothing tx2
@@ -1635,9 +1644,9 @@ testKillTx = do
     assertBalanceOffline ai 0 4000000
 
     assertAddressOffline accE 0 0 AddressExternal
-        [(0, BalanceInfo 10000000 10000000 1 1)]
+        [(0, R.Balance 10000000 10000000 1 1)]
     assertAddressOffline accE 0 0 AddressInternal
-        [(0, BalanceInfo 4000000 0 1 0)]
+        [(0, R.Balance 4000000 0 1 0)]
 
 testTx :: ([WalletTx], [WalletAddr])
        -> ([(AccountId, TxConfidence)], Int)

@@ -26,10 +26,11 @@ module Network.Haskoin.Crypto.Hash
 ) where
 
 import           Control.DeepSeq         (NFData, rnf)
-import           Control.Monad           (guard, (<=<))
+import           Control.Monad           (guard, (<=<), mzero)
 import           Crypto.Hash             (Digest, RIPEMD160, SHA1, SHA256,
                                           SHA512, hash)
 import           Crypto.MAC.HMAC         (hmac)
+import qualified Data.Aeson              as J
 import           Data.Byteable           (toBytes)
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as BS
@@ -57,6 +58,33 @@ newtype Hash256 = Hash256 { getHash256 :: ByteString }
 newtype Hash160 = Hash160 { getHash160 :: ByteString }
     deriving (Eq, Ord)
 
+instance J.FromJSON CheckSum32 where
+    parseJSON = J.withText "Checksum32" $ \t ->
+        maybe mzero return $ bsToCheckSum32 =<< decodeHex (cs t)
+
+instance J.ToJSON CheckSum32 where
+    toJSON = J.String . cs . encodeHex . getCheckSum32
+
+instance J.FromJSON Hash512 where
+    parseJSON = J.withText "Hash512" $ \t ->
+        maybe mzero return $ bsToHash512 =<< decodeHex (cs t)
+
+instance J.ToJSON Hash512 where
+    toJSON = J.String . cs . encodeHex . getHash512
+
+instance J.FromJSON Hash256 where
+    parseJSON = J.withText "Hash256" $ \t ->
+        maybe mzero return $ bsToHash256 =<< decodeHex (cs t)
+
+instance J.ToJSON Hash256 where
+    toJSON = J.String . cs . encodeHex . getHash256
+
+instance J.FromJSON Hash160 where
+    parseJSON = J.withText "Hash160" $ \t ->
+        maybe mzero return $ bsToHash160 =<< decodeHex (cs t)
+
+instance J.ToJSON Hash160 where
+    toJSON = J.String . cs . encodeHex . getHash160
 
 instance NFData CheckSum32 where
     rnf (CheckSum32 bs) = rnf bs

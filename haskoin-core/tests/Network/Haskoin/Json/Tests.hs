@@ -26,6 +26,10 @@ tests =
           , testProperty "XPubKey" $ forAll arbitraryXPubKey (testID . snd)
           , testProperty "DerivPath" $ forAll arbitraryDerivPath testID
           , testProperty "ParsedPath" $ forAll arbitraryParsedPath testID
+          , testProperty "CheckSum32" $ forAll arbitraryCheckSum32 testID
+          , testProperty "Hash512" $ forAll arbitraryHash512 testID
+          , testProperty "Hash256" $ forAll arbitraryHash256 testID
+          , testProperty "Hash160" $ forAll arbitraryHash160 testID
           ]
     ]
 
