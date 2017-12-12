@@ -114,6 +114,7 @@ runSPVServerWithContext cfg ctx = do
                 ]
             mapM_ link as
             (_,r) <- waitAnyCancel as
+            $(L.logDebug) "Exiting main thread"
             return r
         -- In this mode, we launch the client ZMQ API and we sync the
         -- wallet database with an SPV node.
